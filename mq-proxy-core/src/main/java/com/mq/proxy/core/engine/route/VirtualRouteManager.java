@@ -9,7 +9,9 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,6 +27,8 @@ public class VirtualRouteManager {
     private long routeCacheExpireMillis = 30000;
     private final ConcurrentHashMap<String, Long> routeCacheTimestamp = new ConcurrentHashMap<>();
     private volatile boolean started = false;
+    private final ConcurrentHashMap<String, String> brokerNameToRealAddr = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> brokerNameAndIdToRealAddr = new ConcurrentHashMap<>();
 
     public VirtualRouteManager() {
         this.namesrvClient = new NettyRemotingClient(new NettyClientConfig());
@@ -49,6 +53,8 @@ public class VirtualRouteManager {
         }
         this.routeCache.clear();
         this.routeCacheTimestamp.clear();
+        this.brokerNameToRealAddr.clear();
+        this.brokerNameAndIdToRealAddr.clear();
         this.started = false;
     }
 
@@ -109,6 +115,48 @@ public class VirtualRouteManager {
 
     public void refreshRouteCache() {
         this.routeCacheTimestamp.clear();
+    }
+
+    public String getRealBrokerAddr(String brokerName) {
+        if (brokerName == null) {
+            return null;
+        }
+        return this.brokerNameToRealAddr.get(brokerName);
+    }
+
+    public String getRealBrokerAddr(String brokerName, long brokerId) {
+        if (brokerName == null) {
+            return null;
+        }
+        String key = brokerName + ":" + brokerId;
+        String addr = this.brokerNameAndIdToRealAddr.get(key);
+        if (addr != null) {
+            return addr;
+        }
+        return this.brokerNameToRealAddr.get(brokerName);
+    }
+
+    public List<String> getAllRealBrokerAddrs() {
+        return new ArrayList<>(this.brokerNameToRealAddr.values());
+    }
+
+    public String findBrokerNameByTopicAndQueueId(String topic, int queueId) {
+        TopicRouteInfo routeInfo = this.routeCache.get(topic);
+        if (routeInfo == null || routeInfo.getQueueDatas() == null) {
+            return null;
+        }
+        int currentQueueId = 0;
+        for (TopicRouteInfo.QueueData queueData : routeInfo.getQueueDatas()) {
+            int writeQueueNums = queueData.getWriteQueueNums();
+            if (queueId >= currentQueueId && queueId < currentQueueId + writeQueueNums) {
+                return queueData.getBrokerName();
+            }
+            currentQueueId += writeQueueNums;
+        }
+        if (!routeInfo.getQueueDatas().isEmpty()) {
+            return routeInfo.getQueueDatas().get(0).getBrokerName();
+        }
+        return null;
     }
 
     public String getProxyAddr() {
@@ -174,8 +222,27 @@ public class VirtualRouteManager {
 
         java.util.List<TopicRouteInfo.BrokerData> virtualBrokerDatas = new java.util.ArrayList<>();
         for (TopicRouteInfo.BrokerData brokerData : realRoute.getBrokerDatas()) {
+            String brokerName = brokerData.getBrokerName();
+
+            for (Map.Entry<Long, String> entry : brokerData.getBrokerAddrs().entrySet()) {
+                String realAddr = entry.getValue();
+                if (realAddr != null && !realAddr.isEmpty()) {
+                    this.brokerNameAndIdToRealAddr.put(brokerName + ":" + entry.getKey(), realAddr);
+                    if (entry.getKey() == 0L) {
+                        this.brokerNameToRealAddr.put(brokerName, realAddr);
+                    }
+                }
+            }
+
+            if (!this.brokerNameToRealAddr.containsKey(brokerName)) {
+                String firstAddr = brokerData.getBrokerAddrs().values().iterator().next();
+                if (firstAddr != null && !firstAddr.isEmpty()) {
+                    this.brokerNameToRealAddr.put(brokerName, firstAddr);
+                }
+            }
+
             TopicRouteInfo.BrokerData virtualBrokerData = new TopicRouteInfo.BrokerData();
-            virtualBrokerData.setBrokerName(brokerData.getBrokerName());
+            virtualBrokerData.setBrokerName(brokerName);
             Map<Long, String> virtualAddrs = new HashMap<>();
             for (Map.Entry<Long, String> entry : brokerData.getBrokerAddrs().entrySet()) {
                 virtualAddrs.put(entry.getKey(), this.proxyAddr);

@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.MessageEngine;
+import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
@@ -16,9 +17,14 @@ import java.util.HashMap;
 public class ConsumerManageProcessor implements RemotingProcessor {
 
     private final MessageEngine messageEngine;
+    private VirtualRouteManager virtualRouteManager;
 
     public ConsumerManageProcessor(MessageEngine messageEngine) {
         this.messageEngine = messageEngine;
+    }
+
+    public void setVirtualRouteManager(VirtualRouteManager virtualRouteManager) {
+        this.virtualRouteManager = virtualRouteManager;
     }
 
     @Override
@@ -36,10 +42,12 @@ public class ConsumerManageProcessor implements RemotingProcessor {
 
     private RemotingCommand queryConsumerOffset(RemotingCommand request) {
         QueryConsumerOffsetRequestHeader requestHeader = parseQueryConsumerOffsetRequestHeader(request);
+        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0);
         OffsetResult offsetResult = messageEngine.queryConsumerOffset(
                 requestHeader.getConsumerGroup(),
                 requestHeader.getTopic(),
-                requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0
+                requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0,
+                brokerName
         );
 
         if (offsetResult.isSuccess()) {
@@ -56,12 +64,14 @@ public class ConsumerManageProcessor implements RemotingProcessor {
 
     private RemotingCommand updateConsumerOffset(RemotingCommand request) {
         UpdateConsumerOffsetRequestHeader requestHeader = parseUpdateConsumerOffsetRequestHeader(request);
+        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0);
         try {
             messageEngine.updateConsumerOffset(
                     requestHeader.getConsumerGroup(),
                     requestHeader.getTopic(),
                     requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0,
-                    requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : 0
+                    requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : 0,
+                    brokerName
             );
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
         } catch (Exception e) {
@@ -104,5 +114,12 @@ public class ConsumerManageProcessor implements RemotingProcessor {
             }
         }
         return header;
+    }
+
+    private String resolveBrokerName(String topic, int queueId) {
+        if (this.virtualRouteManager != null) {
+            return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
+        }
+        return null;
     }
 }

@@ -396,8 +396,88 @@ RocketMQ 4.9支持两种序列化类型：
 **关键点**：
 - Proxy拦截路由请求，返回虚拟路由
 - 客户端以为连接的是真实Broker，实际连接Proxy
+- 虚拟路由保留原始brokerName，仅替换brokerAddr为Proxy地址
+- Proxy内部维护brokerName→真实Broker地址的映射，用于请求路由
 
-### 3.5 消息发送流程
+### 3.5 客户端重试与Proxy路由机制
+
+#### 3.5.1 问题背景
+
+Proxy在虚拟路由中将所有Broker地址替换为Proxy自身地址，客户端重试时"换Broker"逻辑失效——虽然客户端选择了不同的brokerName，但实际连接的都是同一个Proxy。如果Proxy不做路由区分，所有请求都会发往同一个后端Broker，重试无法切换到健康的Broker。
+
+#### 3.5.2 方案选择：按brokerName路由（方案B）
+
+**核心思路**：Proxy根据请求中的brokerName字段查找真实Broker地址并转发，将重试决策交给客户端。
+
+**选择理由**：
+1. 重试场景不限于生产者发送，消费者拉取、消费进度查询/更新、心跳、队列锁定等均涉及重试/路由，Proxy内部重试需为每种请求类型单独实现
+2. 客户端原生SDK已具备完善的故障隔离、延迟感知、主从切换机制，应充分复用
+3. Proxy按brokerName路由只需做一件事：维护映射+查找地址+转发，实现简单且通用
+
+**效率分析**：Proxy与后端所有Broker均通过NettyRemotingClient维护长连接池，无论路由到哪个Broker都复用已有连接，不存在额外连接开销。方案B与Proxy内部重试的Proxy→Broker往返次数相同，区别仅在于Client↔Proxy多一次往返（客户端收到失败响应后触发重试），而这恰好是客户端更新故障表（updateFaultItem）所必需的。
+
+#### 3.5.3 重试流程时序图
+
+```
+Producer                    Proxy                              Broker-A      Broker-B
+  │                          │                                  │             │
+  │ ① 获取路由               │                                  │             │
+  │ ── GetRouteInfo ────────▶│                                  │             │
+  │                          │ ── 查NameServer ────────────────▶│             │
+  │                          │◀─ 真实路由 ─────────────────────│             │
+  │                          │                                  │             │
+  │                          │ ── 保存映射:                      │             │
+  │                          │   broker-a → 192.168.1.1         │             │
+  │                          │   broker-b → 192.168.1.2         │             │
+  │                          │                                  │             │
+  │                          │ ── 替换地址为proxy:port           │             │
+  │◀─ 虚拟路由 ──────────────│   (保留原始brokerName)           │             │
+  │  broker-a → proxy:port   │                                  │             │
+  │  broker-b → proxy:port   │                                  │             │
+  │                          │                                  │             │
+  │ ② 首次发送               │                                  │             │
+  │ ── SendMsg ─────────────▶│                                  │             │
+  │  (brokerName=broker-a)   │                                  │             │
+  │                          │ ── 查映射: broker-a→192.168.1.1  │             │
+  │                          │ ── 转发到真实地址 ───────────────▶│             │
+  │                          │                                  │ 失败 ✗      │
+  │                          │◀── 错误响应 ────────────────────│             │
+  │◀── 错误响应 ─────────────│                                  │             │
+  │  (客户端更新故障表:       │                                  │             │
+  │   标记broker-a延迟高)    │                                  │             │
+  │                          │                                  │             │
+  │ ③ 客户端重试             │                                  │             │
+  │ ── SendMsg ─────────────▶│                                  │             │
+  │  (brokerName=broker-b)   │                                  │             │
+  │                          │ ── 查映射: broker-b→192.168.1.2  │             │
+  │                          │ ── 转发到真实地址 ────────────────────────────▶│
+  │                          │◀── 成功响应 ──────────────────────────────────│
+  │◀── 成功 ────────────────│                                  │             │
+```
+
+#### 3.5.4 各协议请求的重试/路由场景
+
+| 场景 | 请求码 | 客户端重试/路由逻辑 | Proxy路由方式 |
+|------|--------|-------------------|-------------|
+| 生产者同步发送 | 10/310/320 | 失败换brokerName重试 | 按brokerName路由到不同Broker |
+| 生产者异步发送 | 10/310/320 | onExceptionImpl换Broker重试 | 按brokerName路由 |
+| 消费者拉取消息 | 11 | 拉取失败换Broker重试 | 按brokerName路由 |
+| 查询消费进度 | 14 | 失败换Master/Slave | 按brokerName+brokerId区分主从 |
+| 更新消费进度 | 15 | 失败重试 | 按brokerName路由 |
+| 心跳 | 34 | 按brokerName发心跳 | 按brokerName路由 |
+| 客户端注销 | 35 | 按brokerName注销 | 按brokerName路由 |
+| 消费者发回消息 | 36 | 失败重试 | 按brokerName路由 |
+| 队列锁定/解锁 | 41/42 | 按brokerName操作 | 按brokerName路由 |
+
+#### 3.5.5 实现要点
+
+1. **VirtualRouteManager**：在convertToVirtualRoute中同时保存brokerName→真实地址映射，支持按brokerName和brokerName+brokerId查询
+2. **各Processor**：从请求中提取brokerName，传递给MessageEngine
+3. **MessageEngine**：将brokerName传递给StorageAdapter
+4. **RocketMQStorageAdapter**：根据brokerName查找真实Broker地址转发，找不到时退化为配置的默认brokerAddr
+5. **InternalMessage**：新增brokerName字段，在请求解析时填充
+
+### 3.6 消息发送流程
 
 ```
 Producer         Proxy          NameServer(后端)       Broker(后端)

@@ -19,9 +19,11 @@ public class ProcessorRegister {
         remotingServer.registerProcessor(RequestCode.SEND_BATCH_MESSAGE, sendMessageProcessor);
 
         PullMessageProcessor pullMessageProcessor = new PullMessageProcessor(messageEngine);
+        pullMessageProcessor.setVirtualRouteManager(virtualRouteManager);
         remotingServer.registerProcessor(RequestCode.PULL_MESSAGE, pullMessageProcessor);
 
         ConsumerManageProcessor consumerManageProcessor = new ConsumerManageProcessor(messageEngine);
+        consumerManageProcessor.setVirtualRouteManager(virtualRouteManager);
         remotingServer.registerProcessor(RequestCode.QUERY_CONSUMER_OFFSET, consumerManageProcessor);
         remotingServer.registerProcessor(RequestCode.UPDATE_CONSUMER_OFFSET, consumerManageProcessor);
 

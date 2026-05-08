@@ -39,45 +39,59 @@ public class MessageEngine {
             if (adapter == null) {
                 return PutResult.fail(14, "no storage adapter available");
             }
-            return adapter.putMessage(message);
+            String brokerAddr = resolveBrokerAddr(message.getBrokerName());
+            return adapter.putMessage(message, brokerAddr);
         } catch (Exception e) {
             return PutResult.fail(1, e.getMessage());
         }
     }
 
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType) {
+    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerName) {
         try {
             StorageAdapter adapter = getStorageAdapter(topic);
             if (adapter == null) {
                 return PullResult.notFound(0, 0, 0);
             }
-            return adapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType);
+            String brokerAddr = resolveBrokerAddr(brokerName);
+            return adapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, brokerAddr);
         } catch (Exception e) {
             return PullResult.notFound(0, 0, 0);
         }
     }
 
-    public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId) {
+    public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerName) {
         try {
             StorageAdapter adapter = getStorageAdapter(topic);
             if (adapter == null) {
                 return OffsetResult.fail(1, "no storage adapter available");
             }
-            return adapter.queryConsumerOffset(consumerGroup, topic, queueId);
+            String brokerAddr = resolveBrokerAddr(brokerName);
+            return adapter.queryConsumerOffset(consumerGroup, topic, queueId, brokerAddr);
         } catch (Exception e) {
             return OffsetResult.fail(1, e.getMessage());
         }
     }
 
-    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset) {
+    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset, String brokerName) {
         try {
             StorageAdapter adapter = getStorageAdapter(topic);
             if (adapter != null) {
-                adapter.updateConsumerOffset(consumerGroup, topic, queueId, commitOffset);
+                String brokerAddr = resolveBrokerAddr(brokerName);
+                adapter.updateConsumerOffset(consumerGroup, topic, queueId, commitOffset, brokerAddr);
             }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private String resolveBrokerAddr(String brokerName) {
+        if (brokerName != null && virtualRouteManager != null) {
+            String realAddr = virtualRouteManager.getRealBrokerAddr(brokerName);
+            if (realAddr != null) {
+                return realAddr;
+            }
+        }
+        return null;
     }
 
     public TopicRouteInfo getRouteInfoByTopic(String topic) {

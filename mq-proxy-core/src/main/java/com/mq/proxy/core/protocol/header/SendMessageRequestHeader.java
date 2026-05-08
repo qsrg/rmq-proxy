@@ -20,6 +20,7 @@ public class SendMessageRequestHeader implements CommandCustomHeader {
     private boolean batch = false;
     private Integer maxReconsumeTimes;
     private Integer topicSysFlag = 0;
+    private String brokerName;
 
     @Override
     public void checkFields() {
@@ -65,6 +66,9 @@ public class SendMessageRequestHeader implements CommandCustomHeader {
         }
         if (topicSysFlag != null) {
             map.put("topicSysFlag", String.valueOf(topicSysFlag));
+        }
+        if (brokerName != null) {
+            map.put("brokerName", brokerName);
         }
         return map;
     }
@@ -179,5 +183,13 @@ public class SendMessageRequestHeader implements CommandCustomHeader {
 
     public void setTopicSysFlag(Integer topicSysFlag) {
         this.topicSysFlag = topicSysFlag;
+    }
+
+    public String getBrokerName() {
+        return brokerName;
+    }
+
+    public void setBrokerName(String brokerName) {
+        this.brokerName = brokerName;
     }
 }

@@ -17,6 +17,7 @@ import java.util.HashMap;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Matchers.*;
 
 public class ConsumerManageProcessorTest {
 
@@ -36,7 +37,7 @@ public class ConsumerManageProcessorTest {
 
     @Test
     public void testQueryConsumerOffset() throws Exception {
-        when(mockAdapter.queryConsumerOffset("testGroup", "TestTopic", 0)).thenReturn(OffsetResult.success(500L));
+        when(mockAdapter.queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), any())).thenReturn(OffsetResult.success(500L));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, null);
         HashMap<String, String> extFields = new HashMap<>();
@@ -53,12 +54,12 @@ public class ConsumerManageProcessorTest {
         assertNotNull(respExtFields);
         assertEquals("500", respExtFields.get("offset"));
 
-        verify(mockAdapter).queryConsumerOffset("testGroup", "TestTopic", 0);
+        verify(mockAdapter).queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), any());
     }
 
     @Test
     public void testUpdateConsumerOffset() throws Exception {
-        doNothing().when(mockAdapter).updateConsumerOffset("testGroup", "TestTopic", 0, 600L);
+        doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), any());
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
         HashMap<String, String> extFields = new HashMap<>();
@@ -73,6 +74,6 @@ public class ConsumerManageProcessorTest {
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
 
-        verify(mockAdapter).updateConsumerOffset("testGroup", "TestTopic", 0, 600L);
+        verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), any());
     }
 }

@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.MessageEngine;
+import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.ResponseCode;
@@ -20,24 +21,34 @@ import java.util.List;
 public class PullMessageProcessor implements RemotingProcessor {
 
     private final MessageEngine messageEngine;
+    private VirtualRouteManager virtualRouteManager;
 
     public PullMessageProcessor(MessageEngine messageEngine) {
         this.messageEngine = messageEngine;
+    }
+
+    public void setVirtualRouteManager(VirtualRouteManager virtualRouteManager) {
+        this.virtualRouteManager = virtualRouteManager;
     }
 
     @Override
     public RemotingCommand processRequest(Channel channel, RemotingCommand request) throws Exception {
         PullMessageRequestHeader requestHeader = parsePullMessageRequestHeader(request);
 
+        String topic = requestHeader.getTopic();
+        int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
+        String brokerName = resolveBrokerName(topic, queueId);
+
         PullResult pullResult = messageEngine.pullMessage(
                 requestHeader.getConsumerGroup(),
-                requestHeader.getTopic(),
-                requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0,
+                topic,
+                queueId,
                 requestHeader.getQueueOffset() != null ? requestHeader.getQueueOffset() : 0,
                 requestHeader.getMaxMsgNums() != null ? requestHeader.getMaxMsgNums() : 32,
                 requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0,
                 requestHeader.getSubscription(),
-                requestHeader.getExpressionType()
+                requestHeader.getExpressionType(),
+                brokerName
         );
 
         PullMessageResponseHeader responseHeader = new PullMessageResponseHeader();
@@ -147,5 +158,12 @@ public class PullMessageProcessor implements RemotingProcessor {
             bos.write(buffer.array());
         }
         return bos.toByteArray();
+    }
+
+    private String resolveBrokerName(String topic, int queueId) {
+        if (this.virtualRouteManager != null) {
+            return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
+        }
+        return null;
     }
 }

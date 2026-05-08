@@ -17,6 +17,7 @@ import java.util.HashMap;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Matchers.*;
 
 public class SendMessageProcessorTest {
 
@@ -36,7 +37,7 @@ public class SendMessageProcessorTest {
 
     @Test
     public void testProcessSendMessage() throws Exception {
-        when(mockAdapter.putMessage(any(InternalMessage.class))).thenReturn(PutResult.success("msg123", 0, 100L));
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("msg123", 0, 100L));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
         HashMap<String, String> extFields = new HashMap<>();
@@ -64,12 +65,12 @@ public class SendMessageProcessorTest {
         assertEquals("0", respExtFields.get("queueId"));
         assertEquals("100", respExtFields.get("queueOffset"));
 
-        verify(mockAdapter).putMessage(any(InternalMessage.class));
+        verify(mockAdapter).putMessage(any(InternalMessage.class), any());
     }
 
     @Test
     public void testProcessSendMessageV2() throws Exception {
-        when(mockAdapter.putMessage(any(InternalMessage.class))).thenReturn(PutResult.success("msgV2-456", 1, 200L));
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("msgV2-456", 1, 200L));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
         HashMap<String, String> extFields = new HashMap<>();
@@ -99,6 +100,6 @@ public class SendMessageProcessorTest {
         assertEquals("1", respExtFields.get("queueId"));
         assertEquals("200", respExtFields.get("queueOffset"));
 
-        verify(mockAdapter).putMessage(any(InternalMessage.class));
+        verify(mockAdapter).putMessage(any(InternalMessage.class), any());
     }
 }

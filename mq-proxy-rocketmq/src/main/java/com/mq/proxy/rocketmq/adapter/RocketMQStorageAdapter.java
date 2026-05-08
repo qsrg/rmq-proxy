@@ -53,6 +53,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public PutResult putMessage(InternalMessage message) throws Exception {
+        return putMessage(message, null);
+    }
+
+    @Override
+    public PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception {
         SendMessageRequestHeader header = new SendMessageRequestHeader();
         header.setProducerGroup(message.getProducerGroup());
         header.setTopic(message.getTopic());
@@ -73,11 +78,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.setBody(message.getBody());
         request.makeCustomHeaderToNet();
 
-        String brokerAddr = this.storageConfig.getBrokerAddr();
-        System.out.println("[DEBUG] putMessage extFields: " + request.getExtFields());
-        byte[] headerData = request.headerEncode();
-        System.out.println("[DEBUG] putMessage headerJson: " + new String(headerData, "UTF-8"));
-        RemotingCommand response = this.remotingClient.invokeSync(brokerAddr, request, 3000);
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             String msgId = response.getExtFields() != null ? response.getExtFields().get("msgId") : null;
@@ -93,6 +95,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType) throws Exception {
+        return pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, null);
+    }
+
+    @Override
+    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception {
         PullMessageRequestHeader header = new PullMessageRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -109,8 +116,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
         request.makeCustomHeaderToNet();
 
-        String brokerAddr = this.storageConfig.getBrokerAddr();
-        RemotingCommand response = this.remotingClient.invokeSync(brokerAddr, request, suspendTimeoutMillis + 1000);
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, suspendTimeoutMillis + 1000);
 
         long nextBeginOffset = response.getExtFields() != null && response.getExtFields().get("nextBeginOffset") != null
                 ? Long.parseLong(response.getExtFields().get("nextBeginOffset")) : 0L;
@@ -137,6 +144,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId) throws Exception {
+        return queryConsumerOffset(consumerGroup, topic, queueId, null);
+    }
+
+    @Override
+    public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception {
         QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -145,8 +157,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, header);
         request.makeCustomHeaderToNet();
 
-        String brokerAddr = this.storageConfig.getBrokerAddr();
-        RemotingCommand response = this.remotingClient.invokeSync(brokerAddr, request, 3000);
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             long offset = response.getExtFields() != null && response.getExtFields().get("offset") != null
@@ -159,6 +171,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset) throws Exception {
+        updateConsumerOffset(consumerGroup, topic, queueId, commitOffset, null);
+    }
+
+    @Override
+    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset, String brokerAddr) throws Exception {
         UpdateConsumerOffsetRequestHeader header = new UpdateConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -168,8 +185,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, header);
         request.makeCustomHeaderToNet();
 
-        String brokerAddr = this.storageConfig.getBrokerAddr();
-        RemotingCommand response = this.remotingClient.invokeSync(brokerAddr, request, 3000);
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
             throw new RuntimeException("updateConsumerOffset failed, code: " + response.getCode() + ", remark: " + response.getRemark());
@@ -183,14 +200,26 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public RemotingCommand forwardToBroker(RemotingCommand request) throws Exception {
-        String brokerAddr = this.storageConfig.getBrokerAddr();
-        
+        return forwardToBroker(request, null);
+    }
+
+    @Override
+    public RemotingCommand forwardToBroker(RemotingCommand request, String brokerAddr) throws Exception {
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+
         RemotingCommand forwardRequest = RemotingCommand.createRequestCommand(request.getCode(), request.getCustomHeader());
         forwardRequest.setExtFields(request.getExtFields());
         forwardRequest.setBody(request.getBody());
         forwardRequest.setFlag(request.getFlag());
         forwardRequest.setRemark(request.getRemark());
-        
-        return this.remotingClient.invokeSync(brokerAddr, forwardRequest, 3000);
+
+        return this.remotingClient.invokeSync(targetAddr, forwardRequest, 3000);
+    }
+
+    private String resolveBrokerAddr(String brokerAddr) {
+        if (brokerAddr != null && !brokerAddr.isEmpty()) {
+            return brokerAddr;
+        }
+        return this.storageConfig.getBrokerAddr();
     }
 }
