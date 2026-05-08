@@ -1,0 +1,100 @@
+# Tasks
+
+- [x] Task 1: 创建Maven多模块项目骨架
+  - [x] SubTask 1.1: 创建父POM（mq-proxy-system），定义Java 8版本、依赖管理、模块列表
+  - [x] SubTask 1.2: 创建mq-proxy-core模块（核心引擎：protocol、engine、storage包）
+  - [x] SubTask 1.3: 创建mq-proxy-rocketmq模块（RocketMQ存储适配器）
+  - [x] SubTask 1.4: 创建mq-proxy-mock模块（Mock存储适配器）
+  - [x] SubTask 1.5: 创建mq-proxy-sdk模块（预留，仅pom.xml）
+  - [x] SubTask 1.6: 创建mq-proxy-admin模块（预留，仅pom.xml）
+  - [x] SubTask 1.7: 验证 `mvn clean compile` 全模块编译通过
+- [x] Task 2: 实现RemotingCommand协议帧编解码
+  - [x] SubTask 2.1: 实现RemotingCommand数据模型（code, language, version, opaque, flag, remark, extFields, customHeader, body, serializeTypeCurrentRPC）
+  - [x] SubTask 2.2: 实现SerializeType枚举（JSON=0, ROCKETMQ=1）
+  - [x] SubTask 2.3: 实现LanguageCode枚举
+  - [x] SubTask 2.4: 实现CommandCustomHeader接口
+  - [x] SubTask 2.5: 实现RemotingCommandEncoder（协议帧编码：Total Length + Header Length + Header Data + Body Data）
+  - [x] SubTask 2.6: 实现RemotingCommandDecoder（协议帧解码：解析帧结构，区分序列化类型）
+  - [x] SubTask 2.7: 实现JSON序列化/反序列化RemotingCommand Header
+  - [x] SubTask 2.8: 实现ROCKETMQ序列化/反序列化RemotingCommand Header
+  - [x] SubTask 2.9: 实现Flag标志位工具方法（isResponseType, isOnewayRPC, markResponseType等）
+  - [x] SubTask 2.10: 编写编解码单元测试
+- [x] Task 3: 实现核心请求码和响应码定义
+  - [x] SubTask 3.1: 实现RequestCode常量类（阶段一10个P0级请求码 + 系统请求码）
+  - [x] SubTask 3.2: 实现ResponseCode常量类（RemotingSysResponseCode + 核心业务ResponseCode）
+  - [x] SubTask 3.3: 实现阶段一所需的CommandCustomHeader子类（SendMessageRequestHeader, SendMessageRequestHeaderV2, SendMessageResponseHeader, PullMessageRequestHeader, PullMessageResponseHeader, QueryConsumerOffsetRequestHeader, QueryConsumerOffsetResponseHeader, UpdateConsumerOffsetRequestHeader, UnregisterClientRequestHeader, GetRouteInfoRequestHeader, RegisterBrokerRequestHeader, HeartbeatData）
+- [x] Task 4: 实现基于Netty的网络服务器
+  - [x] SubTask 4.1: 实现NettyRemotingServer（Netty ServerBootstrap配置，端口监听）
+  - [x] SubTask 4.2: 实现NettyServerConfig配置类（监听端口、线程数等参数）
+  - [x] SubTask 4.3: 实现NettyChannelHandler（处理入站RemotingCommand，分发到对应处理器）
+  - [x] SubTask 4.4: 实现RemotingProcessor接口和默认处理器注册机制
+  - [x] SubTask 4.5: 实现请求响应异步处理框架（基于opaque的请求响应匹配）
+  - [x] SubTask 4.6: 实现不支持的请求码默认处理（返回REQUEST_CODE_NOT_SUPPORTED）
+- [x] Task 5: 实现StorageAdapter SPI存储抽象层
+  - [x] SubTask 5.1: 定义StorageAdapter SPI接口（initialize, shutdown, putMessage, pullMessage, queryConsumerOffset, updateConsumerOffset, healthCheck等方法）
+  - [x] SubTask 5.2: 定义内部消息模型（InternalMessage, PutResult, PullResult, OffsetResult）
+  - [x] SubTask 5.3: 定义TopicRouteInfo路由信息模型
+  - [x] SubTask 5.4: 实现SPI加载机制（ServiceLoader或自定义SPI）
+  - [x] SubTask 5.5: 实现StorageAdapterManager（适配器注册、路由分发、健康检查）
+- [x] Task 6: 实现RocketMQ存储适配器
+  - [x] SubTask 6.1: 实现RocketMQStorageAdapter（实现StorageAdapter接口）
+  - [x] SubTask 6.2: 实现RocketMQ RemotingClient（连接真实RocketMQ Broker，发送RemotingCommand）
+  - [x] SubTask 6.3: 实现putMessage（将InternalMessage转换为RemotingCommand，发送到Broker）
+  - [x] SubTask 6.4: 实现pullMessage（构建PullMessage RemotingCommand，发送到Broker，解析响应）
+  - [x] SubTask 6.5: 实现queryConsumerOffset和updateConsumerOffset
+  - [x] SubTask 6.6: 实现适配器初始化（连接Broker、NameServer配置）和关闭
+  - [x] SubTask 6.7: 编写RocketMQ适配器单元测试
+- [x] Task 7: 实现Mock存储适配器
+  - [x] SubTask 7.1: 实现MockStorageAdapter（实现StorageAdapter接口）
+  - [x] SubTask 7.2: 实现putMessage（模拟成功，返回msgId、queueId、queueOffset）
+  - [x] SubTask 7.3: 实现pullMessage（返回空消息列表或内存中存储的消息）
+  - [x] SubTask 7.4: 实现queryConsumerOffset和updateConsumerOffset（内存Map存储）
+  - [x] SubTask 7.5: 编写Mock适配器单元测试
+- [x] Task 8: 实现虚拟路由管理
+  - [x] SubTask 8.1: 实现VirtualRouteManager（维护虚拟路由表，Broker地址替换为Proxy地址）
+  - [x] SubTask 8.2: 实现Proxy注册为虚拟Broker（启动时向NameServer发送REGISTER_BROKER）
+  - [x] SubTask 8.3: 实现GET_ROUTEINFO_BY_TOPIC处理器（获取真实路由，替换地址，返回虚拟路由）
+  - [x] SubTask 8.4: 实现路由信息缓存和定期刷新
+  - [x] SubTask 8.5: 编写虚拟路由管理单元测试
+- [x] Task 9: 实现核心消息引擎
+  - [x] SubTask 9.1: 实现MessageEngine（协调协议处理、消息路由、存储操作）
+  - [x] SubTask 9.2: 实现SEND_MESSAGE处理器（解析Header，调用MessageEngine发送消息）
+  - [x] SubTask 9.3: 实现SEND_MESSAGE_V2处理器（解析V2短字段名Header）
+  - [x] SubTask 9.4: 实现SEND_BATCH_MESSAGE处理器
+  - [x] SubTask 9.5: 实现PULL_MESSAGE处理器
+  - [x] SubTask 9.6: 实现QUERY_CONSUMER_OFFSET处理器
+  - [x] SubTask 9.7: 实现UPDATE_CONSUMER_OFFSET处理器
+  - [x] SubTask 9.8: 实现HEART_BEAT处理器
+  - [x] SubTask 9.9: 实现UNREGISTER_CLIENT处理器
+  - [x] SubTask 9.10: 实现REGISTER_BROKER处理器
+- [x] Task 10: 实现Proxy启动入口和配置
+  - [x] SubTask 10.1: 实现ProxyStartup启动类（初始化各组件，启动Netty服务器）
+  - [x] SubTask 10.2: 实现ProxyConfig配置类（监听端口、NameServer地址、存储适配器类型等）
+  - [x] SubTask 10.3: 实现优雅关闭（关闭Netty服务器、关闭存储适配器、清理资源）
+  - [x] SubTask 10.4: 实现配置文件加载（properties/yaml格式）
+- [x] Task 11: 集成测试验证
+  - [x] SubTask 11.1: 搭建集成测试环境（启动Proxy + Mock适配器）
+  - [x] SubTask 11.2: 编写消息发送集成测试（使用RocketMQ原生客户端通过Proxy发送消息）
+  - [x] SubTask 11.3: 编写消息消费集成测试（使用RocketMQ原生客户端通过Proxy消费消息）
+  - [x] SubTask 11.4: 编写消费进度管理集成测试
+  - [x] SubTask 11.5: 编写客户端启停集成测试（心跳、注销）
+  - [x] SubTask 11.6: 编写路由发现集成测试
+
+# Task Dependencies
+
+- [Task 2] depends on [Task 1]
+- [Task 3] depends on [Task 1]
+- [Task 4] depends on [Task 2]
+- [Task 5] depends on [Task 1]
+- [Task 6] depends on [Task 5, Task 3]
+- [Task 7] depends on [Task 5]
+- [Task 8] depends on [Task 4, Task 3]
+- [Task 9] depends on [Task 4, Task 5, Task 3]
+- [Task 10] depends on [Task 4, Task 5, Task 8, Task 9]
+- [Task 11] depends on [Task 10]
+
+# Parallelizable Work
+
+- Task 2 和 Task 3 可并行（都依赖Task 1，但相互独立）
+- Task 6 和 Task 7 可并行（都依赖Task 5，但相互独立）
+- Task 8 和 Task 9 部分可并行（Task 9依赖Task 4和Task 5，Task 8依赖Task 4，但Task 9的部分处理器需要Task 8的路由管理）
