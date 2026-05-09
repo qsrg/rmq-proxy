@@ -104,7 +104,7 @@ public class SendMessageProcessor implements RemotingProcessor {
                 header.setTopicSysFlag(Integer.parseInt(extFields.get("topicSysFlag")));
             }
             if (extFields.get("bname") != null) {
-                header.setBname(extFields.get("bname"));
+                header.setBrokerName(extFields.get("bname"));
             }
         }
         return header;

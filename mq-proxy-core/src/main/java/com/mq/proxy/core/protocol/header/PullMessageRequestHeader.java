@@ -17,7 +17,7 @@ public class PullMessageRequestHeader implements CommandCustomHeader {
     private String subscription;
     private Long subVersion;
     private String expressionType;
-    private String bname;
+    private String brokerName;
 
     @Override
     public void checkFields() {
@@ -59,8 +59,8 @@ public class PullMessageRequestHeader implements CommandCustomHeader {
         if (expressionType != null) {
             map.put("expressionType", expressionType);
         }
-        if (bname != null) {
-            map.put("bname", bname);
+        if (brokerName != null) {
+            map.put("bname", brokerName);
         }
         return map;
     }
@@ -153,11 +153,11 @@ public class PullMessageRequestHeader implements CommandCustomHeader {
         this.expressionType = expressionType;
     }
 
-    public String getBname() {
-        return bname;
+    public String getBrokerName() {
+        return brokerName;
     }
 
-    public void setBname(String bname) {
-        this.bname = bname;
+    public void setBrokerName(String brokerName) {
+        this.brokerName = brokerName;
     }
 }

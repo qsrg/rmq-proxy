@@ -39,7 +39,7 @@ public class MessageEngine {
             if (adapter == null) {
                 return PutResult.fail(14, "no storage adapter available");
             }
-            String brokerAddr = resolveBrokerAddr(message.getBname());
+            String brokerAddr = resolveBrokerAddr(message.getBrokerName());
             return adapter.putMessage(message, brokerAddr);
         } catch (Exception e) {
             return PutResult.fail(1, e.getMessage());

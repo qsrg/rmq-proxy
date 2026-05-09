@@ -22,7 +22,7 @@ public class InternalMessage {
     private int maxReconsumeTimes;
     private boolean batch;
     private int topicSysFlag;
-    private String bname;
+    private String brokerName;
 
     public static InternalMessage createFromSendMessageRequest(SendMessageRequestHeader header, byte[] body) {
         InternalMessage message = new InternalMessage();
@@ -41,7 +41,7 @@ public class InternalMessage {
         message.setMaxReconsumeTimes(header.getMaxReconsumeTimes() != null ? header.getMaxReconsumeTimes() : 16);
         message.setBatch(header.isBatch());
         message.setTopicSysFlag(header.getTopicSysFlag() != null ? header.getTopicSysFlag() : 0);
-        message.setBname(header.getBname());
+        message.setBrokerName(header.getBrokerName());
         return message;
     }
 
@@ -197,11 +197,11 @@ public class InternalMessage {
         this.topicSysFlag = topicSysFlag;
     }
 
-    public String getBname() {
-        return bname;
+    public String getBrokerName() {
+        return brokerName;
     }
 
-    public void setBname(String bname) {
-        this.bname = bname;
+    public void setBrokerName(String brokerName) {
+        this.brokerName = brokerName;
     }
 }
