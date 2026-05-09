@@ -37,7 +37,7 @@ public class PullMessageProcessor implements RemotingProcessor {
 
         String topic = requestHeader.getTopic();
         int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
-        String brokerName = resolveBrokerName(topic, queueId);
+        String brokerName = resolveBrokerName(topic, queueId, request);
 
         PullResult pullResult = messageEngine.pullMessage(
                 requestHeader.getConsumerGroup(),
@@ -160,7 +160,13 @@ public class PullMessageProcessor implements RemotingProcessor {
         return bos.toByteArray();
     }
 
-    private String resolveBrokerName(String topic, int queueId) {
+    private String resolveBrokerName(String topic, int queueId, RemotingCommand request) {
+        if (request.getExtFields() != null) {
+            String bname = request.getExtFields().get("bname");
+            if (bname != null && !bname.isEmpty()) {
+                return bname;
+            }
+        }
         if (this.virtualRouteManager != null) {
             return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
         }

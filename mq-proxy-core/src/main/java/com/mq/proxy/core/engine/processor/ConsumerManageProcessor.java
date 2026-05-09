@@ -42,7 +42,7 @@ public class ConsumerManageProcessor implements RemotingProcessor {
 
     private RemotingCommand queryConsumerOffset(RemotingCommand request) {
         QueryConsumerOffsetRequestHeader requestHeader = parseQueryConsumerOffsetRequestHeader(request);
-        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0);
+        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0, request);
         OffsetResult offsetResult = messageEngine.queryConsumerOffset(
                 requestHeader.getConsumerGroup(),
                 requestHeader.getTopic(),
@@ -64,7 +64,7 @@ public class ConsumerManageProcessor implements RemotingProcessor {
 
     private RemotingCommand updateConsumerOffset(RemotingCommand request) {
         UpdateConsumerOffsetRequestHeader requestHeader = parseUpdateConsumerOffsetRequestHeader(request);
-        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0);
+        String brokerName = resolveBrokerName(requestHeader.getTopic(), requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0, request);
         try {
             messageEngine.updateConsumerOffset(
                     requestHeader.getConsumerGroup(),
@@ -116,7 +116,13 @@ public class ConsumerManageProcessor implements RemotingProcessor {
         return header;
     }
 
-    private String resolveBrokerName(String topic, int queueId) {
+    private String resolveBrokerName(String topic, int queueId, RemotingCommand request) {
+        if (request.getExtFields() != null) {
+            String bname = request.getExtFields().get("bname");
+            if (bname != null && !bname.isEmpty()) {
+                return bname;
+            }
+        }
         if (this.virtualRouteManager != null) {
             return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
         }
