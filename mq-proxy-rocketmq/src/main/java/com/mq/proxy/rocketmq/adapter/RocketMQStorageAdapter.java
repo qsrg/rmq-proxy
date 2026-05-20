@@ -98,6 +98,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         return pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, null);
     }
 
+    private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
+
     @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception {
         PullMessageRequestHeader header = new PullMessageRequestHeader();
@@ -106,12 +108,21 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         header.setQueueId(queueId);
         header.setQueueOffset(queueOffset);
         header.setMaxMsgNums(maxMsgNums);
-        header.setSysFlag(0);
+
+        String subExpr = subscription != null && !subscription.isEmpty() ? subscription : "*";
+        String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
+
+        int sysFlag = FLAG_SUBSCRIPTION;
+        if (suspendTimeoutMillis > 0) {
+            sysFlag |= 0x1 << 1;
+        }
+        header.setSysFlag(sysFlag);
+
         header.setCommitOffset(0L);
         header.setSuspendTimeoutMillis(suspendTimeoutMillis);
-        header.setSubscription(subscription);
-        header.setSubVersion(0L);
-        header.setExpressionType(expressionType != null ? expressionType : "TAG");
+        header.setSubscription(subExpr);
+        header.setSubVersion(System.currentTimeMillis());
+        header.setExpressionType(exprType);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
         request.makeCustomHeaderToNet();

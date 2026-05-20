@@ -2,6 +2,7 @@ package com.mq.proxy.core.engine;
 
 import com.mq.proxy.core.engine.processor.ClientManageProcessor;
 import com.mq.proxy.core.engine.processor.ConsumerManageProcessor;
+import com.mq.proxy.core.engine.processor.LockBatchMQProcessor;
 import com.mq.proxy.core.engine.processor.NameServerProcessor;
 import com.mq.proxy.core.engine.processor.PullMessageProcessor;
 import com.mq.proxy.core.engine.processor.SendMessageProcessor;
@@ -31,6 +32,10 @@ public class ProcessorRegister {
         remotingServer.registerProcessor(RequestCode.HEART_BEAT, clientManageProcessor);
         remotingServer.registerProcessor(RequestCode.UNREGISTER_CLIENT, clientManageProcessor);
         remotingServer.registerProcessor(RequestCode.GET_CONSUMER_LIST_BY_GROUP, clientManageProcessor);
+
+        LockBatchMQProcessor lockBatchMQProcessor = new LockBatchMQProcessor(clientConnectionManager);
+        remotingServer.registerProcessor(RequestCode.LOCK_BATCH_MQ, lockBatchMQProcessor);
+        remotingServer.registerProcessor(RequestCode.UNLOCK_BATCH_MQ, lockBatchMQProcessor);
 
         NameServerProcessor nameServerProcessor = new NameServerProcessor(virtualRouteManager);
         remotingServer.registerProcessor(RequestCode.GET_ROUTEINFO_BY_TOPIC, nameServerProcessor);
