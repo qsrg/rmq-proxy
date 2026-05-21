@@ -98,4 +98,50 @@ public class ClientManageProcessorTest {
         assertFalse(clientConnectionManager.getAllProducerGroups().contains("producerGroup1"));
         assertFalse(clientConnectionManager.getAllConsumerGroups().contains("consumerGroup1"));
     }
+
+    @Test
+    public void testNotifyConsumerIdsChanged() throws Exception {
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, null);
+        java.util.HashMap<String, String> extFields = new java.util.HashMap<>();
+        extFields.put("consumerGroup", "consumerGroup1");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(mockChannel, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+    }
+
+    @Test
+    public void testHeartBeatTriggersNotifyOnNewConsumer() throws Exception {
+        Channel channel2 = mock(Channel.class);
+        when(channel2.isActive()).thenReturn(true);
+        when(channel2.remoteAddress()).thenReturn(null);
+
+        HeartbeatData heartbeat1 = new HeartbeatData();
+        heartbeat1.setClientID("client-001");
+        Set<HeartbeatData.ConsumerData> consumerDataSet1 = new HashSet<>();
+        HeartbeatData.ConsumerData consumerData1 = new HeartbeatData.ConsumerData();
+        consumerData1.setGroupName("groupA");
+        consumerDataSet1.add(consumerData1);
+        heartbeat1.setConsumerDataSet(consumerDataSet1);
+
+        RemotingCommand request1 = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
+        request1.setBody(heartbeat1.encode());
+        processor.processRequest(mockChannel, request1);
+
+        HeartbeatData heartbeat2 = new HeartbeatData();
+        heartbeat2.setClientID("client-002");
+        Set<HeartbeatData.ConsumerData> consumerDataSet2 = new HashSet<>();
+        HeartbeatData.ConsumerData consumerData2 = new HeartbeatData.ConsumerData();
+        consumerData2.setGroupName("groupA");
+        consumerDataSet2.add(consumerData2);
+        heartbeat2.setConsumerDataSet(consumerDataSet2);
+
+        RemotingCommand request2 = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
+        request2.setBody(heartbeat2.encode());
+        processor.processRequest(channel2, request2);
+
+        assertTrue(clientConnectionManager.getAllConsumerGroups().contains("groupA"));
+    }
 }

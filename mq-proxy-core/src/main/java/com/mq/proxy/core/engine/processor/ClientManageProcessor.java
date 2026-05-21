@@ -5,6 +5,7 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
+import com.mq.proxy.core.protocol.header.NotifyConsumerIdsChangedRequestHeader;
 import com.mq.proxy.core.protocol.header.UnregisterClientRequestHeader;
 import com.mq.proxy.core.server.RemotingProcessor;
 import io.netty.channel.Channel;
@@ -14,12 +15,14 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientManageProcessor implements RemotingProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ClientManageProcessor.class);
 
     private final ClientConnectionManager clientConnectionManager;
+    private final ConcurrentHashMap<String, Integer> consumerGroupMemberCount = new ConcurrentHashMap<>();
 
     public ClientManageProcessor(ClientConnectionManager clientConnectionManager) {
         this.clientConnectionManager = clientConnectionManager;
@@ -35,6 +38,8 @@ public class ClientManageProcessor implements RemotingProcessor {
             return unregisterClient(channel, request);
         } else if (requestCode == RequestCode.GET_CONSUMER_LIST_BY_GROUP) {
             return getConsumerListByGroup(request);
+        } else if (requestCode == RequestCode.NOTIFY_CONSUMER_IDS_CHANGED) {
+            return notifyConsumerIdsChanged(request);
         } else {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, "unsupported request code");
         }
@@ -54,8 +59,18 @@ public class ClientManageProcessor implements RemotingProcessor {
 
             if (heartbeatData.getConsumerDataSet() != null) {
                 for (HeartbeatData.ConsumerData consumerData : heartbeatData.getConsumerDataSet()) {
-                    clientConnectionManager.registerConsumer(channel, clientID, consumerData.getGroupName(),
+                    String group = consumerData.getGroupName();
+                    clientConnectionManager.registerConsumer(channel, clientID, group,
                             null, null, null, consumerData.getSubscriptionDataSet());
+
+                    int prevCount = consumerGroupMemberCount.getOrDefault(group, 0);
+                    int currentCount = countGroupMembers(group);
+                    consumerGroupMemberCount.put(group, currentCount);
+                    if (currentCount != prevCount) {
+                        log.info("Consumer group {} member count changed: {} -> {}, notifying all members",
+                                group, prevCount, currentCount);
+                        notifyGroupMembers(group);
+                    }
                 }
             }
         }
@@ -67,8 +82,20 @@ public class ClientManageProcessor implements RemotingProcessor {
         UnregisterClientRequestHeader requestHeader = parseUnregisterClientRequestHeader(request);
         String clientID = requestHeader.getClientID();
 
+        String consumerGroup = requestHeader.getConsumerGroup();
         clientConnectionManager.unregisterClient(channel, clientID,
-                requestHeader.getProducerGroup(), requestHeader.getConsumerGroup());
+                requestHeader.getProducerGroup(), consumerGroup);
+
+        if (consumerGroup != null) {
+            int prevCount = consumerGroupMemberCount.getOrDefault(consumerGroup, 0);
+            int currentCount = countGroupMembers(consumerGroup);
+            consumerGroupMemberCount.put(consumerGroup, currentCount);
+            if (currentCount != prevCount && currentCount > 0) {
+                log.info("Consumer group {} member count changed after unregister: {} -> {}, notifying remaining members",
+                        consumerGroup, prevCount, currentCount);
+                notifyGroupMembers(consumerGroup);
+            }
+        }
 
         return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
     }
@@ -118,5 +145,62 @@ public class ClientManageProcessor implements RemotingProcessor {
 
     public ClientConnectionManager getClientConnectionManager() {
         return clientConnectionManager;
+    }
+
+    private RemotingCommand notifyConsumerIdsChanged(RemotingCommand request) {
+        // broker发来的NOTIFY_CONSUMER_IDS_CHANGED需要转发给SDK客户端
+        // 但不应再次触发memberCount检测和递归通知
+        NotifyConsumerIdsChangedRequestHeader header = parseNotifyConsumerIdsChangedRequestHeader(request);
+        String consumerGroup = header.getConsumerGroup();
+
+        if (consumerGroup != null) {
+            log.info("Received NOTIFY_CONSUMER_IDS_CHANGED from broker for group {}, forwarding to SDK clients",
+                    consumerGroup);
+            notifyGroupMembers(consumerGroup);
+        }
+
+        return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+    }
+
+    private NotifyConsumerIdsChangedRequestHeader parseNotifyConsumerIdsChangedRequestHeader(RemotingCommand request) {
+        NotifyConsumerIdsChangedRequestHeader header = (NotifyConsumerIdsChangedRequestHeader) request.getCustomHeader();
+        if (header != null) {
+            return header;
+        }
+        header = new NotifyConsumerIdsChangedRequestHeader();
+        HashMap<String, String> extFields = request.getExtFields();
+        if (extFields != null) {
+            header.setConsumerGroup(extFields.get("consumerGroup"));
+        }
+        return header;
+    }
+
+    private int countGroupMembers(String consumerGroup) {
+        int count = 0;
+        for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
+            if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void notifyGroupMembers(String consumerGroup) {
+        RemotingCommand notification = RemotingCommand.createRequestCommand(
+                RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", consumerGroup);
+        notification.setExtFields(extFields);
+
+        for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
+            if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
+                Channel ch = clientInfo.getChannel();
+                if (ch != null && ch.isActive()) {
+                    ch.writeAndFlush(notification);
+                    log.debug("Sent NOTIFY_CONSUMER_IDS_CHANGED to clientId={}, group={}",
+                            clientInfo.getClientId(), consumerGroup);
+                }
+            }
+        }
     }
 }

@@ -159,6 +159,10 @@ public class ClientConnectionManager {
         return channelClientMap.size();
     }
 
+    public List<ClientInfo> getAllClientInfos() {
+        return new ArrayList<>(channelClientMap.values());
+    }
+
     private ClientInfo findClientById(String clientId) {
         if (clientId == null) return null;
         Channel channel = clientIdChannelMap.get(clientId);

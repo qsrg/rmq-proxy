@@ -32,9 +32,13 @@ public class NameServerProcessor implements RemotingProcessor {
             return getRouteInfoByTopic(request);
         } else if (requestCode == RequestCode.REGISTER_BROKER) {
             return registerBroker(request);
+        } else if (requestCode == RequestCode.UNREGISTER_BROKER) {
+            return forwardToNameServer(request);
         } else if (requestCode == RequestCode.GET_BROKER_CLUSTER_INFO) {
             return forwardToNameServer(request);
         } else if (requestCode == RequestCode.GET_ALL_TOPIC_LIST_FROM_NAMESERVER) {
+            return forwardToNameServer(request);
+        } else if (requestCode == RequestCode.DELETE_TOPIC_IN_NAMESRV) {
             return forwardToNameServer(request);
         } else {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, "unsupported request code");
