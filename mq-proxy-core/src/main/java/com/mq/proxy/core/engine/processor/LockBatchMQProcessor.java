@@ -56,6 +56,16 @@ public class LockBatchMQProcessor implements RemotingProcessor {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, "invalid request parameters");
         }
 
+        // 广播模式跳过锁定，直接返回全部成功
+        if (clientConnectionManager.isBroadcastGroup(group)) {
+            log.info("LockBatchMQ skip for BROADCASTING group={}, clientId={}, return all lockOK", group, clientId);
+            LockBatchResponseBody responseBody = new LockBatchResponseBody();
+            responseBody.setLockOKMQSet(mqSet);
+            RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+            response.setBody(responseBody.encode());
+            return response;
+        }
+
         log.info("LockBatchMQ request: group={}, clientId={}, mqSet={}", group, clientId, mqSet);
 
         Set<MessageQueue> lockOKMQSet = new HashSet<>();
@@ -104,6 +114,12 @@ public class LockBatchMQProcessor implements RemotingProcessor {
 
         if (group == null || mqSet == null || mqSet.isEmpty()) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, "invalid request parameters");
+        }
+
+        // 广播模式跳过解锁
+        if (clientConnectionManager.isBroadcastGroup(group)) {
+            log.info("UnlockBatchMQ skip for BROADCASTING group={}, clientId={}", group, clientId);
+            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
         }
 
         log.info("UnlockBatchMQ request: group={}, clientId={}, mqSet={}", group, clientId, mqSet);

@@ -17,6 +17,7 @@
         <module>mq-proxy-admin</module>
         <module>mq-proxy-standalone</module>
         <module>mq-proxy-test</module>
+        <module>mq-proxy-example</module>
     </modules>
 
     <properties>
@@ -39,6 +40,24 @@
             <dependency>
                 <groupId>com.mq.proxy</groupId>
                 <artifactId>mq-proxy-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.mq.proxy</groupId>
+                <artifactId>mq-proxy-sdk</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.mq.proxy</groupId>
+                <artifactId>mq-proxy-rocketmq</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.mq.proxy</groupId>
+                <artifactId>mq-proxy-mock</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

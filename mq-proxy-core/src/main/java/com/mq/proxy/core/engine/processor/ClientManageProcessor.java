@@ -61,15 +61,23 @@ public class ClientManageProcessor implements RemotingProcessor {
                 for (HeartbeatData.ConsumerData consumerData : heartbeatData.getConsumerDataSet()) {
                     String group = consumerData.getGroupName();
                     clientConnectionManager.registerConsumer(channel, clientID, group,
-                            null, null, null, consumerData.getSubscriptionDataSet());
+                            consumerData.getConsumeType(),
+                            consumerData.getMessageModel(),
+                            consumerData.getConsumeFromWhere(),
+                            consumerData.getSubscriptionDataSet());
 
-                    int prevCount = consumerGroupMemberCount.getOrDefault(group, 0);
-                    int currentCount = countGroupMembers(group);
-                    consumerGroupMemberCount.put(group, currentCount);
-                    if (currentCount != prevCount) {
-                        log.info("Consumer group {} member count changed: {} -> {}, notifying all members",
-                                group, prevCount, currentCount);
-                        notifyGroupMembers(group);
+                    boolean isBroadcast = "BROADCASTING".equals(consumerData.getMessageModel());
+                    if (!isBroadcast) {
+                        int prevCount = consumerGroupMemberCount.getOrDefault(group, 0);
+                        int currentCount = countGroupMembers(group);
+                        consumerGroupMemberCount.put(group, currentCount);
+                        if (prevCount == 0 || currentCount < prevCount) {
+                            log.info("Consumer group {} member count changed: {} -> {}, notifying all members",
+                                    group, prevCount, currentCount);
+                            notifyGroupMembers(group);
+                        }
+                    } else {
+                        log.info("Consumer group {} is BROADCASTING mode, skip rebalance notification", group);
                     }
                 }
             }
@@ -83,10 +91,12 @@ public class ClientManageProcessor implements RemotingProcessor {
         String clientID = requestHeader.getClientID();
 
         String consumerGroup = requestHeader.getConsumerGroup();
+        boolean isBroadcast = consumerGroup != null && clientConnectionManager.isBroadcastGroup(consumerGroup);
+
         clientConnectionManager.unregisterClient(channel, clientID,
                 requestHeader.getProducerGroup(), consumerGroup);
 
-        if (consumerGroup != null) {
+        if (consumerGroup != null && !isBroadcast) {
             int prevCount = consumerGroupMemberCount.getOrDefault(consumerGroup, 0);
             int currentCount = countGroupMembers(consumerGroup);
             consumerGroupMemberCount.put(consumerGroup, currentCount);
@@ -95,6 +105,8 @@ public class ClientManageProcessor implements RemotingProcessor {
                         consumerGroup, prevCount, currentCount);
                 notifyGroupMembers(consumerGroup);
             }
+        } else if (isBroadcast) {
+            log.info("Consumer group {} is BROADCASTING, skip notification after unregister", consumerGroup);
         }
 
         return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
@@ -107,12 +119,11 @@ public class ClientManageProcessor implements RemotingProcessor {
             consumerGroup = extFields.get("consumerGroup");
         }
 
-        List<HeartbeatData.ConsumerData> allConsumerData = clientConnectionManager.getAllConsumerData();
         java.util.List<String> consumerIdList = new java.util.ArrayList<>();
         if (consumerGroup != null) {
-            for (HeartbeatData.ConsumerData data : allConsumerData) {
-                if (consumerGroup.equals(data.getGroupName())) {
-                    consumerIdList.add("proxy-client-" + data.getGroupName());
+            for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
+                if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
+                    consumerIdList.add(clientInfo.getClientId());
                 }
             }
         }
@@ -154,6 +165,11 @@ public class ClientManageProcessor implements RemotingProcessor {
         String consumerGroup = header.getConsumerGroup();
 
         if (consumerGroup != null) {
+            // 广播模式不需要转发rebalance通知
+            if (clientConnectionManager.isBroadcastGroup(consumerGroup)) {
+                log.info("Skip NOTIFY_CONSUMER_IDS_CHANGED for BROADCASTING group {}", consumerGroup);
+                return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+            }
             log.info("Received NOTIFY_CONSUMER_IDS_CHANGED from broker for group {}, forwarding to SDK clients",
                     consumerGroup);
             notifyGroupMembers(consumerGroup);
@@ -186,17 +202,22 @@ public class ClientManageProcessor implements RemotingProcessor {
     }
 
     private void notifyGroupMembers(String consumerGroup) {
-        RemotingCommand notification = RemotingCommand.createRequestCommand(
-                RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, null);
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("consumerGroup", consumerGroup);
-        notification.setExtFields(extFields);
-
         for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
             if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
                 Channel ch = clientInfo.getChannel();
                 if (ch != null && ch.isActive()) {
-                    ch.writeAndFlush(notification);
+                    RemotingCommand notification = RemotingCommand.createRequestCommand(
+                            RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, null);
+                    HashMap<String, String> extFields = new HashMap<>();
+                    extFields.put("consumerGroup", consumerGroup);
+                    notification.setExtFields(extFields);
+
+                    ch.writeAndFlush(notification).addListener(future -> {
+                        if (!future.isSuccess()) {
+                            log.warn("Failed to send NOTIFY_CONSUMER_IDS_CHANGED to clientId={}, group={}, error={}",
+                                    clientInfo.getClientId(), consumerGroup, future.cause().getMessage());
+                        }
+                    });
                     log.debug("Sent NOTIFY_CONSUMER_IDS_CHANGED to clientId={}, group={}",
                             clientInfo.getClientId(), consumerGroup);
                 }

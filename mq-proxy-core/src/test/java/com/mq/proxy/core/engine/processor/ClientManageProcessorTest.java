@@ -28,6 +28,7 @@ public class ClientManageProcessorTest {
         mockChannel = mock(Channel.class);
         when(mockChannel.isActive()).thenReturn(true);
         when(mockChannel.remoteAddress()).thenReturn(null);
+        when(mockChannel.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
     }
 
     @Test

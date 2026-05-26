@@ -20,6 +20,8 @@ public class ProxyClientConfig {
 
     private boolean enableTrace = true;
 
+    private String messageModel = "CLUSTERING";
+
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
 
     private long idleChannelScanIntervalMillis = 60000L;
@@ -120,5 +122,13 @@ public class ProxyClientConfig {
 
     public void setIdleChannelTimeoutMillis(long idleChannelTimeoutMillis) {
         this.idleChannelTimeoutMillis = idleChannelTimeoutMillis;
+    }
+
+    public String getMessageModel() {
+        return messageModel;
+    }
+
+    public void setMessageModel(String messageModel) {
+        this.messageModel = messageModel;
     }
 }

@@ -121,7 +121,9 @@ public class AdminBrokerProcessorTest {
         when(mockAdapter.forwardToBroker(any(RemotingCommand.class), any())).thenReturn(brokerResponse);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ALL_CONSUMER_OFFSET, null);
-        request.setExtFields(new HashMap<>());
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("topic", "TestTopic");
+        request.setExtFields(extFields);
 
         RemotingCommand response = processor.processRequest(null, request);
 
@@ -237,6 +239,7 @@ public class AdminBrokerProcessorTest {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.VIEW_MESSAGE_BY_ID, null);
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("offset", "1000");
+        extFields.put("topic", "TestTopic");
         request.setExtFields(extFields);
 
         RemotingCommand response = processor.processRequest(null, request);
@@ -266,7 +269,9 @@ public class AdminBrokerProcessorTest {
         when(mockAdapter.forwardToBroker(any(RemotingCommand.class), any())).thenReturn(brokerResponse);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ALL_TOPIC_CONFIG, null);
-        request.setExtFields(new HashMap<>());
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("topic", "TestTopic");
+        request.setExtFields(extFields);
 
         RemotingCommand response = processor.processRequest(null, request);
 
@@ -345,7 +350,9 @@ public class AdminBrokerProcessorTest {
             when(mockAdapter.forwardToBroker(any(RemotingCommand.class), any())).thenReturn(brokerResponse);
 
             RemotingCommand request = RemotingCommand.createRequestCommand(requestCode, null);
-            request.setExtFields(new HashMap<>());
+            HashMap<String, String> configExtFields = new HashMap<>();
+            configExtFields.put("topic", "TestTopic");
+            request.setExtFields(configExtFields);
 
             RemotingCommand response = processor.processRequest(null, request);
             assertEquals("Expected SUCCESS for requestCode=" + requestCode,

@@ -90,6 +90,10 @@ public class HeartbeatData {
     public static class ConsumerData {
         private String groupName;
         private Set<SubscriptionData> subscriptionDataSet = new HashSet<>();
+        private String consumeType;
+        private String messageModel;
+        private String consumeFromWhere;
+        private boolean unitMode;
 
         public String getGroupName() {
             return groupName;
@@ -105,6 +109,38 @@ public class HeartbeatData {
 
         public void setSubscriptionDataSet(Set<SubscriptionData> subscriptionDataSet) {
             this.subscriptionDataSet = subscriptionDataSet;
+        }
+
+        public String getConsumeType() {
+            return consumeType;
+        }
+
+        public void setConsumeType(String consumeType) {
+            this.consumeType = consumeType;
+        }
+
+        public String getMessageModel() {
+            return messageModel;
+        }
+
+        public void setMessageModel(String messageModel) {
+            this.messageModel = messageModel;
+        }
+
+        public String getConsumeFromWhere() {
+            return consumeFromWhere;
+        }
+
+        public void setConsumeFromWhere(String consumeFromWhere) {
+            this.consumeFromWhere = consumeFromWhere;
+        }
+
+        public boolean isUnitMode() {
+            return unitMode;
+        }
+
+        public void setUnitMode(boolean unitMode) {
+            this.unitMode = unitMode;
         }
 
         @Override

@@ -36,6 +36,10 @@ public class ClientConnectionManager {
         ClientInfo clientInfo = channelClientMap.computeIfAbsent(channel, k -> new ClientInfo(channel, clientId));
         clientInfo.setClientId(clientId);
         clientInfo.addConsumerGroup(consumerGroup);
+        clientInfo.setGroupConsumeType(consumerGroup, consumeType);
+        clientInfo.setGroupMessageModel(consumerGroup, messageModel);
+        clientInfo.setGroupConsumeFromWhere(consumerGroup, consumeFromWhere);
+        // 保留全局字段更新（向后兼容）
         if (consumeType != null) clientInfo.setConsumeType(consumeType);
         if (messageModel != null) clientInfo.setMessageModel(messageModel);
         if (consumeFromWhere != null) clientInfo.setConsumeFromWhere(consumeFromWhere);
@@ -44,7 +48,8 @@ public class ClientConnectionManager {
         }
         clientInfo.setLastUpdateTimestamp(System.currentTimeMillis());
         clientIdChannelMap.put(clientId, channel);
-        log.info("Consumer registered: clientId={}, group={}, channel={}", clientId, consumerGroup, channel.remoteAddress());
+        log.info("Consumer registered: clientId={}, group={}, messageModel={}, channel={}",
+                clientId, consumerGroup, clientInfo.getGroupMessageModel(consumerGroup), channel.remoteAddress());
     }
 
     public ClientInfo unregisterClient(Channel channel, String clientId, String producerGroup, String consumerGroup) {
@@ -62,6 +67,7 @@ public class ClientConnectionManager {
         if (consumerGroup != null) {
             clientInfo.removeConsumerGroup(consumerGroup);
             clientInfo.removeSubscriptions(consumerGroup);
+            clientInfo.removeGroupMetadata(consumerGroup);
         }
 
         if (clientInfo.isEmpty()) {
@@ -129,6 +135,9 @@ public class ClientConnectionManager {
             for (String group : clientInfo.getConsumerGroups()) {
                 HeartbeatData.ConsumerData consumerData = new HeartbeatData.ConsumerData();
                 consumerData.setGroupName(group);
+                consumerData.setConsumeType(clientInfo.getGroupConsumeType(group));
+                consumerData.setMessageModel(clientInfo.getGroupMessageModel(group));
+                consumerData.setConsumeFromWhere(clientInfo.getGroupConsumeFromWhere(group));
                 Set<HeartbeatData.SubscriptionData> subs = clientInfo.getSubscriptions(group);
                 if (subs != null) {
                     consumerData.setSubscriptionDataSet(new HashSet<>(subs));
@@ -153,6 +162,18 @@ public class ClientConnectionManager {
 
     public boolean hasAnyClients() {
         return !channelClientMap.isEmpty();
+    }
+
+    public boolean isBroadcastGroup(String consumerGroup) {
+        for (ClientInfo clientInfo : channelClientMap.values()) {
+            if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
+                String model = clientInfo.getGroupMessageModel(consumerGroup);
+                if ("BROADCASTING".equals(model)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public int getChannelCount() {
@@ -187,6 +208,10 @@ public class ClientConnectionManager {
         private volatile String messageModel = "CLUSTERING";
         private volatile String consumeFromWhere = "CONSUME_FROM_LAST_OFFSET";
         private volatile long lastUpdateTimestamp = System.currentTimeMillis();
+        // per-group 消费模式映射
+        private final ConcurrentHashMap<String, String> groupConsumeTypeTable = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, String> groupMessageModelTable = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, String> groupConsumeFromWhereTable = new ConcurrentHashMap<>();
 
         public ClientInfo(Channel channel, String clientId) {
             this.channel = channel;
@@ -203,6 +228,31 @@ public class ClientConnectionManager {
         }
         public void removeSubscriptions(String group) { subscriptionTable.remove(group); }
         public Set<HeartbeatData.SubscriptionData> getSubscriptions(String group) { return subscriptionTable.get(group); }
+
+        // per-group 消费模式方法
+        public void setGroupConsumeType(String group, String consumeType) {
+            if (consumeType != null) groupConsumeTypeTable.put(group, consumeType);
+        }
+        public String getGroupConsumeType(String group) {
+            return groupConsumeTypeTable.getOrDefault(group, consumeType);
+        }
+        public void setGroupMessageModel(String group, String messageModel) {
+            if (messageModel != null) groupMessageModelTable.put(group, messageModel);
+        }
+        public String getGroupMessageModel(String group) {
+            return groupMessageModelTable.getOrDefault(group, messageModel);
+        }
+        public void setGroupConsumeFromWhere(String group, String consumeFromWhere) {
+            if (consumeFromWhere != null) groupConsumeFromWhereTable.put(group, consumeFromWhere);
+        }
+        public String getGroupConsumeFromWhere(String group) {
+            return groupConsumeFromWhereTable.getOrDefault(group, consumeFromWhere);
+        }
+        public void removeGroupMetadata(String group) {
+            groupConsumeTypeTable.remove(group);
+            groupMessageModelTable.remove(group);
+            groupConsumeFromWhereTable.remove(group);
+        }
 
         public boolean isEmpty() { return producerGroups.isEmpty() && consumerGroups.isEmpty(); }
 

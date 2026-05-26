@@ -147,6 +147,11 @@ public class AdminBrokerProcessor implements RemotingProcessor {
             }
         }
 
+        if (brokerAddr == null) {
+            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
+                    "cannot resolve brokerAddr for request code=" + request.getCode());
+        }
+
         StorageAdapter adapter = messageEngine.getDefaultStorageAdapter();
         if (adapter == null) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
@@ -170,7 +175,15 @@ public class AdminBrokerProcessor implements RemotingProcessor {
             }
             String topic = extFields.get("topic");
             if (topic != null && virtualRouteManager != null) {
-                return virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, 0);
+                int queueId = 0;
+                String queueIdStr = extFields.get("queueId");
+                if (queueIdStr != null && !queueIdStr.isEmpty()) {
+                    try {
+                        queueId = Integer.parseInt(queueIdStr);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                return virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
             }
         }
         return null;

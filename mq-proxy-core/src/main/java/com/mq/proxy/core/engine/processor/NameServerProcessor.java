@@ -12,10 +12,14 @@ import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.RemotingProcessor;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
 import io.netty.channel.Channel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 
 public class NameServerProcessor implements RemotingProcessor {
+
+    private static final Logger log = LoggerFactory.getLogger(NameServerProcessor.class);
 
     private final VirtualRouteManager virtualRouteManager;
 
@@ -25,7 +29,8 @@ public class NameServerProcessor implements RemotingProcessor {
 
     @Override
     public RemotingCommand processRequest(Channel channel, RemotingCommand request) throws Exception {
-        System.out.println("[DEBUG] NameServerProcessor received request: code=" + request.getCode() + ", opaque=" + request.getOpaque() + ", channel=" + channel.remoteAddress());
+        log.debug("NameServerProcessor received request: code={}, opaque={}, channel={}",
+                request.getCode(), request.getOpaque(), channel.remoteAddress());
         int requestCode = request.getCode();
 
         if (requestCode == RequestCode.GET_ROUTEINFO_BY_TOPIC) {
@@ -47,13 +52,13 @@ public class NameServerProcessor implements RemotingProcessor {
 
     private RemotingCommand getRouteInfoByTopic(RemotingCommand request) {
         GetRouteInfoRequestHeader requestHeader = parseGetRouteInfoRequestHeader(request);
-        System.out.println("[DEBUG] getRouteInfoByTopic: topic=" + requestHeader.getTopic());
+        log.debug("getRouteInfoByTopic: topic={}", requestHeader.getTopic());
         TopicRouteInfo routeInfo = virtualRouteManager.getRouteInfoByTopic(requestHeader.getTopic());
 
         if (routeInfo != null) {
-            System.out.println("[DEBUG] RouteInfo brokerDatas: " + routeInfo.getBrokerDatas());
+            log.debug("RouteInfo found for topic, brokerDatas count={}", routeInfo.getBrokerDatas() != null ? routeInfo.getBrokerDatas().size() : 0);
             byte[] body = RouteInfoSerializer.encodeTopicRouteInfo(routeInfo);
-            System.out.println("[DEBUG] RouteInfo body: " + new String(body, java.nio.charset.StandardCharsets.UTF_8));
+            log.debug("RouteInfo body encoded, size={}", body.length);
             RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
             response.setBody(body);
             return response;

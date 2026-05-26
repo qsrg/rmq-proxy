@@ -8,6 +8,7 @@ import com.mq.proxy.core.protocol.header.SendMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.PullMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.QueryConsumerOffsetRequestHeader;
 import com.mq.proxy.core.protocol.header.UpdateConsumerOffsetRequestHeader;
+import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
 import com.mq.proxy.sdk.exception.ProxyException;
 import com.mq.proxy.sdk.facade.ProxyClientFacade;
 import com.mq.proxy.sdk.monitor.ProxyMetricsSnapshot;
@@ -18,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class ProxyClient {
@@ -34,6 +36,8 @@ public class ProxyClient {
     private final ProxyClientFacade facade;
 
     private volatile boolean started = false;
+
+    private final LocalOffsetStore localOffsetStore = new LocalOffsetStore();
 
     private final CopyOnWriteArrayList<ConsumerChangeListener> consumerChangeListeners =
         new CopyOnWriteArrayList<>();
@@ -52,8 +56,39 @@ public class ProxyClient {
         if (!started) {
             facade.start();
             registerNotifyProcessor();
+            sendConsumerRegistration();
             started = true;
-            log.info("ProxyClient started, proxy addresses: {}", config.getProxyAddrs());
+            log.info("ProxyClient started, proxy addresses: {}, messageModel: {}",
+                    config.getProxyAddrs(), config.getMessageModel());
+        }
+    }
+
+    private void sendConsumerRegistration() {
+        String consumerGroup = config.getProducerGroup();
+        if (consumerGroup == null || consumerGroup.isEmpty()) {
+            return;
+        }
+        HeartbeatData heartbeatData = new HeartbeatData();
+        heartbeatData.setClientID("SDK@" + consumerGroup + "@" + System.currentTimeMillis());
+
+        HeartbeatData.ConsumerData consumerData = new HeartbeatData.ConsumerData();
+        consumerData.setGroupName(consumerGroup);
+        consumerData.setMessageModel(config.getMessageModel());
+        consumerData.setConsumeType("CONSUME_ACTIVELY");
+        consumerData.setConsumeFromWhere("CONSUME_FROM_LAST_OFFSET");
+        heartbeatData.getConsumerDataSet().add(consumerData);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
+        request.setBody(heartbeatData.encode());
+
+        try {
+            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
+            if (response != null && response.getCode() == RemotingSysResponseCode.SUCCESS) {
+                log.info("SDK consumer registration sent, group={}, messageModel={}",
+                        consumerGroup, config.getMessageModel());
+            }
+        } catch (Exception e) {
+            log.warn("SDK consumer registration failed (non-critical): {}", e.getMessage());
         }
     }
 
@@ -147,6 +182,16 @@ public class ProxyClient {
     }
 
     public long queryConsumerOffset(String consumerGroup, String topic, int queueId) throws ProxyException {
+        // 广播模式使用本地偏移量
+        if ("BROADCASTING".equals(config.getMessageModel())) {
+            long localOffset = localOffsetStore.getOffset(consumerGroup, topic, queueId);
+            if (localOffset >= 0) {
+                return localOffset;
+            }
+            // 首次消费返回-1，让消费者决定从哪里开始
+            return -1L;
+        }
+
         QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -181,6 +226,12 @@ public class ProxyClient {
 
     public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset)
             throws ProxyException {
+        // 广播模式本地存储偏移量，不向broker提交
+        if ("BROADCASTING".equals(config.getMessageModel())) {
+            localOffsetStore.updateOffset(consumerGroup, topic, queueId, commitOffset);
+            return;
+        }
+
         UpdateConsumerOffsetRequestHeader header = new UpdateConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -244,10 +295,16 @@ public class ProxyClient {
             sb.append("TAGS").append((char) 1).append(tags);
         }
         if (keys != null && !keys.isEmpty()) {
-            sb.append((char) 2).append("KEYS").append((char) 1).append(keys);
+            if (sb.length() > 0) {
+                sb.append((char) 2);
+            }
+            sb.append("KEYS").append((char) 1).append(keys);
         }
         if (traceId != null && !traceId.isEmpty()) {
-            sb.append((char) 2).append("TRACE_ID").append((char) 1).append(traceId);
+            if (sb.length() > 0) {
+                sb.append((char) 2);
+            }
+            sb.append("TRACE_ID").append((char) 1).append(traceId);
         }
         return sb.toString();
     }
@@ -344,6 +401,25 @@ public class ProxyClient {
             if (extFields.get("suggestWhichBrokerId") != null) {
                 result.setSuggestWhichBrokerId(Long.parseLong(extFields.get("suggestWhichBrokerId")));
             }
+        }
+    }
+
+    /**
+     * 广播模式本地偏移量存储
+     */
+    private static class LocalOffsetStore {
+        private final ConcurrentHashMap<String, Long> offsetTable = new ConcurrentHashMap<>();
+
+        private String key(String group, String topic, int queueId) {
+            return group + "@" + topic + "@" + queueId;
+        }
+
+        public long getOffset(String group, String topic, int queueId) {
+            return offsetTable.getOrDefault(key(group, topic, queueId), -1L);
+        }
+
+        public void updateOffset(String group, String topic, int queueId, long offset) {
+            offsetTable.put(key(group, topic, queueId), offset);
         }
     }
 }
