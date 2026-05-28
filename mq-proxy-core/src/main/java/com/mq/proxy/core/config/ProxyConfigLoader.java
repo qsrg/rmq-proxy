@@ -10,9 +10,9 @@ public class ProxyConfigLoader {
     public static ProxyConfig loadFromFile(String filePath) {
         try {
             Properties props = new Properties();
-            FileInputStream fis = new FileInputStream(filePath);
-            props.load(fis);
-            fis.close();
+            try (FileInputStream fis = new FileInputStream(filePath)) {
+                props.load(fis);
+            }
             return loadFromProperties(props);
         } catch (Exception e) {
             throw new RuntimeException("Failed to load config from file: " + filePath, e);
@@ -57,6 +57,29 @@ public class ProxyConfigLoader {
         }
         if (props.containsKey("proxy.routeCacheExpireMillis")) {
             config.setRouteCacheExpireMillis(Long.parseLong(props.getProperty("proxy.routeCacheExpireMillis")));
+        }
+
+        // TLS配置
+        if (props.containsKey("proxy.tlsEnabled")) {
+            config.setTlsEnabled(Boolean.parseBoolean(props.getProperty("proxy.tlsEnabled")));
+        }
+        if (props.containsKey("proxy.tlsKeyStorePath")) {
+            config.setTlsKeyStorePath(props.getProperty("proxy.tlsKeyStorePath"));
+        }
+        if (props.containsKey("proxy.tlsKeyStorePassword")) {
+            config.setTlsKeyStorePassword(props.getProperty("proxy.tlsKeyStorePassword"));
+        }
+        if (props.containsKey("proxy.tlsTrustStorePath")) {
+            config.setTlsTrustStorePath(props.getProperty("proxy.tlsTrustStorePath"));
+        }
+        if (props.containsKey("proxy.tlsTrustStorePassword")) {
+            config.setTlsTrustStorePassword(props.getProperty("proxy.tlsTrustStorePassword"));
+        }
+        if (props.containsKey("proxy.tlsKeyStoreType")) {
+            config.setTlsKeyStoreType(props.getProperty("proxy.tlsKeyStoreType"));
+        }
+        if (props.containsKey("proxy.tlsClientAuth")) {
+            config.setTlsClientAuth(Boolean.parseBoolean(props.getProperty("proxy.tlsClientAuth")));
         }
 
         Map<String, String> topicRouteConfig = new HashMap<>();

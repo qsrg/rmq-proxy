@@ -1,0 +1,175 @@
+package com.mq.proxy.sdk.config;
+
+/**
+ * Proxy公共配置 - 支持链式配置
+ */
+public class ProxyCommonConfig {
+
+    private String proxyAddrs = "127.0.0.1:10911";
+
+    private int connectTimeoutMillis = 3000;
+    private int requestTimeoutMillis = 3000;
+    private int retryTimes = 3;
+
+    private long faultIsolationDurationMillis = 30000L;
+
+    private boolean enableMetrics = true;
+    private boolean enableTrace = true;
+
+    private int workerThreadNums = Runtime.getRuntime().availableProcessors();
+
+    private long idleChannelScanIntervalMillis = 60000L;
+    private long idleChannelTimeoutMillis = 120000L;
+
+    // TLS配置
+    private boolean tlsEnabled = false;
+    private String tlsTrustStorePath;
+    private String tlsTrustStorePassword;
+    private String tlsKeyStorePath;
+    private String tlsKeyStorePassword;
+    private String tlsKeyStoreType = "JKS";
+
+    public String getProxyAddrs() {
+        return proxyAddrs;
+    }
+
+    public ProxyCommonConfig setProxyAddrs(String proxyAddrs) {
+        this.proxyAddrs = proxyAddrs;
+        return this;
+    }
+
+    public int getConnectTimeoutMillis() {
+        return connectTimeoutMillis;
+    }
+
+    public ProxyCommonConfig setConnectTimeoutMillis(int connectTimeoutMillis) {
+        this.connectTimeoutMillis = connectTimeoutMillis;
+        return this;
+    }
+
+    public int getRequestTimeoutMillis() {
+        return requestTimeoutMillis;
+    }
+
+    public ProxyCommonConfig setRequestTimeoutMillis(int requestTimeoutMillis) {
+        this.requestTimeoutMillis = requestTimeoutMillis;
+        return this;
+    }
+
+    public int getRetryTimes() {
+        return retryTimes;
+    }
+
+    public ProxyCommonConfig setRetryTimes(int retryTimes) {
+        this.retryTimes = retryTimes;
+        return this;
+    }
+
+    public long getFaultIsolationDurationMillis() {
+        return faultIsolationDurationMillis;
+    }
+
+    public ProxyCommonConfig setFaultIsolationDurationMillis(long faultIsolationDurationMillis) {
+        this.faultIsolationDurationMillis = faultIsolationDurationMillis;
+        return this;
+    }
+
+    public boolean isEnableMetrics() {
+        return enableMetrics;
+    }
+
+    public ProxyCommonConfig setEnableMetrics(boolean enableMetrics) {
+        this.enableMetrics = enableMetrics;
+        return this;
+    }
+
+    public boolean isEnableTrace() {
+        return enableTrace;
+    }
+
+    public ProxyCommonConfig setEnableTrace(boolean enableTrace) {
+        this.enableTrace = enableTrace;
+        return this;
+    }
+
+    public int getWorkerThreadNums() {
+        return workerThreadNums;
+    }
+
+    public ProxyCommonConfig setWorkerThreadNums(int workerThreadNums) {
+        this.workerThreadNums = workerThreadNums;
+        return this;
+    }
+
+    public long getIdleChannelScanIntervalMillis() {
+        return idleChannelScanIntervalMillis;
+    }
+
+    public ProxyCommonConfig setIdleChannelScanIntervalMillis(long idleChannelScanIntervalMillis) {
+        this.idleChannelScanIntervalMillis = idleChannelScanIntervalMillis;
+        return this;
+    }
+
+    public long getIdleChannelTimeoutMillis() {
+        return idleChannelTimeoutMillis;
+    }
+
+    public ProxyCommonConfig setIdleChannelTimeoutMillis(long idleChannelTimeoutMillis) {
+        this.idleChannelTimeoutMillis = idleChannelTimeoutMillis;
+        return this;
+    }
+
+    public boolean isTlsEnabled() {
+        return tlsEnabled;
+    }
+
+    public ProxyCommonConfig setTlsEnabled(boolean tlsEnabled) {
+        this.tlsEnabled = tlsEnabled;
+        return this;
+    }
+
+    public String getTlsTrustStorePath() {
+        return tlsTrustStorePath;
+    }
+
+    public ProxyCommonConfig setTlsTrustStorePath(String tlsTrustStorePath) {
+        this.tlsTrustStorePath = tlsTrustStorePath;
+        return this;
+    }
+
+    public String getTlsTrustStorePassword() {
+        return tlsTrustStorePassword;
+    }
+
+    public ProxyCommonConfig setTlsTrustStorePassword(String tlsTrustStorePassword) {
+        this.tlsTrustStorePassword = tlsTrustStorePassword;
+        return this;
+    }
+
+    public String getTlsKeyStorePath() {
+        return tlsKeyStorePath;
+    }
+
+    public ProxyCommonConfig setTlsKeyStorePath(String tlsKeyStorePath) {
+        this.tlsKeyStorePath = tlsKeyStorePath;
+        return this;
+    }
+
+    public String getTlsKeyStorePassword() {
+        return tlsKeyStorePassword;
+    }
+
+    public ProxyCommonConfig setTlsKeyStorePassword(String tlsKeyStorePassword) {
+        this.tlsKeyStorePassword = tlsKeyStorePassword;
+        return this;
+    }
+
+    public String getTlsKeyStoreType() {
+        return tlsKeyStoreType;
+    }
+
+    public ProxyCommonConfig setTlsKeyStoreType(String tlsKeyStoreType) {
+        this.tlsKeyStoreType = tlsKeyStoreType;
+        return this;
+    }
+}

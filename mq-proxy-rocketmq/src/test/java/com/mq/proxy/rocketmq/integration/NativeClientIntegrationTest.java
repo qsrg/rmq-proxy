@@ -248,7 +248,7 @@ public class NativeClientIntegrationTest {
                 assertEquals("Message body should match", msgBody, new String(received.getBody(), "UTF-8"));
                 System.out.println("SUCCESS: Native client produced and consumed message through proxy!");
             } else {
-                System.out.println("WARNING: Message not consumed within timeout. This might be expected if pull/suspend parameters are not fully compatible.");
+                fail("Message was not consumed within 30 seconds");
             }
         } finally {
             producer.shutdown();

@@ -1,6 +1,6 @@
 package com.mq.proxy.sdk.facade;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.config.ProxyCommonConfig;
 import com.mq.proxy.sdk.exception.ProxyConnectException;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
@@ -16,7 +16,7 @@ public class ProxyChannelManager {
     
     private static final Logger log = LoggerFactory.getLogger(ProxyChannelManager.class);
     
-    private final ProxyClientConfig config;
+    private final ProxyCommonConfig config;
     private final Bootstrap bootstrap;
     
     private final ConcurrentHashMap<String, ChannelWrapper> channelTable = new ConcurrentHashMap<>();
@@ -46,7 +46,7 @@ public class ProxyChannelManager {
         }
     }
     
-    public ProxyChannelManager(ProxyClientConfig config, Bootstrap bootstrap) {
+    public ProxyChannelManager(ProxyCommonConfig config, Bootstrap bootstrap) {
         this.config = config;
         this.bootstrap = bootstrap;
     }

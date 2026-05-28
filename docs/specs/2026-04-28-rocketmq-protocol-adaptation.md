@@ -502,22 +502,22 @@
 
 ## 5. 分阶段适配计划
 
-### 阶段一：核心消息链路（最小可用）
+### 阶段一：核心消息链路（最小可用） ✅ 已完成
 
 **目标**：实现普通消息的发送和拉取，客户端能正常收发消息
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P0 | SEND_MESSAGE | 10 | 消息发送V1 | 代理转发 |
-| P0 | SEND_MESSAGE_V2 | 310 | 消息发送V2 | 代理转发 |
-| P0 | SEND_BATCH_MESSAGE | 320 | 批量发送 | 代理转发 |
-| P0 | PULL_MESSAGE | 11 | 消息拉取 | 代理转发 |
-| P0 | QUERY_CONSUMER_OFFSET | 14 | 查询消费进度 | 代理转发 |
-| P0 | UPDATE_CONSUMER_OFFSET | 15 | 更新消费进度 | 代理转发 |
-| P0 | GET_ROUTEINFO_BY_TOPIC | 105 | 获取路由信息 | 虚拟路由代理 |
-| P0 | HEART_BEAT | 34 | 心跳 | 代理转发 |
-| P0 | UNREGISTER_CLIENT | 35 | 客户端注销 | 代理转发 |
-| P0 | REGISTER_BROKER | 103 | Broker注册 | Proxy注册到NameServer |
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 | 处理器 |
+|--------|--------|-----|------|---------|---------|--------|
+| P0 | SEND_MESSAGE | 10 | 消息发送V1 | StorageAdapter本地处理 | ✅ 已实现 | SendMessageProcessor |
+| P0 | SEND_MESSAGE_V2 | 310 | 消息发送V2 | StorageAdapter本地处理 | ✅ 已实现 | SendMessageProcessor |
+| P0 | SEND_BATCH_MESSAGE | 320 | 批量发送 | StorageAdapter本地处理 | ✅ 已实现 | SendMessageProcessor |
+| P0 | PULL_MESSAGE | 11 | 消息拉取 | StorageAdapter本地处理 | ✅ 已实现 | PullMessageProcessor |
+| P0 | QUERY_CONSUMER_OFFSET | 14 | 查询消费进度 | StorageAdapter本地处理 | ✅ 已实现 | ConsumerManageProcessor |
+| P0 | UPDATE_CONSUMER_OFFSET | 15 | 更新消费进度 | StorageAdapter本地处理 | ✅ 已实现 | ConsumerManageProcessor |
+| P0 | GET_ROUTEINFO_BY_TOPIC | 105 | 获取路由信息 | 虚拟路由代理 | ✅ 已实现 | NameServerProcessor |
+| P0 | HEART_BEAT | 34 | 心跳 | 代理本地处理+转发 | ✅ 已实现 | ClientManageProcessor |
+| P0 | UNREGISTER_CLIENT | 35 | 客户端注销 | 代理本地处理 | ✅ 已实现 | ClientManageProcessor |
+| P0 | REGISTER_BROKER | 103 | Broker注册 | Proxy注册到NameServer | ✅ 已实现 | NameServerProcessor |
 
 **涉及Header类**：
 - SendMessageRequestHeader / SendMessageRequestHeaderV2 / SendMessageResponseHeader
@@ -534,24 +534,24 @@
 
 ---
 
-### 阶段二：消费管理增强
+### 阶段二：消费管理增强 ✅ 已完成
 
 **目标**：支持消费者组管理、消息重试、队列分配
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P1 | GET_CONSUMER_LIST_BY_GROUP | 38 | 获取消费者列表 | 代理转发 |
-| P1 | LOCK_BATCH_MQ | 41 | 批量锁定队列 | 代理转发 |
-| P1 | UNLOCK_BATCH_MQ | 42 | 批量解锁队列 | 代理转发 |
-| P1 | CONSUMER_SEND_MSG_BACK | 36 | 消息消费失败发回 | 代理转发 |
-| P1 | QUERY_BROKER_OFFSET | 13 | 查询Broker偏移量 | 代理转发 |
-| P1 | GET_MAX_OFFSET | 30 | 获取最大偏移量 | 代理转发 |
-| P1 | GET_MIN_OFFSET | 31 | 获取最小偏移量 | 代理转发 |
-| P1 | SEARCH_OFFSET_BY_TIMESTAMP | 29 | 按时间戳搜索偏移量 | 代理转发 |
-| P1 | GET_EARLIEST_MSG_STORETIME | 32 | 获取最早消息存储时间 | 代理转发 |
-| P1 | GET_ALL_CONSUMER_OFFSET | 43 | 获取所有消费者偏移量 | 代理转发 |
-| P1 | GET_ALL_DELAY_OFFSET | 45 | 获取所有延迟偏移量 | 代理转发 |
-| P1 | NOTIFY_CONSUMER_IDS_CHANGED | 40 | 通知消费者ID变更 | 代理转发 |
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 | 处理器 |
+|--------|--------|-----|------|---------|---------|--------|
+| P1 | GET_CONSUMER_LIST_BY_GROUP | 38 | 获取消费者列表 | 代理本地处理 | ✅ 已实现 | ClientManageProcessor |
+| P1 | LOCK_BATCH_MQ | 41 | 批量锁定队列 | 代理内存锁(30s过期) | ✅ 已实现 | LockBatchMQProcessor |
+| P1 | UNLOCK_BATCH_MQ | 42 | 批量解锁队列 | 代理内存锁 | ✅ 已实现 | LockBatchMQProcessor |
+| P1 | CONSUMER_SEND_MSG_BACK | 36 | 消息消费失败发回 | 转发到Broker | ✅ 已实现 | ConsumerSendMsgBackProcessor |
+| P1 | QUERY_BROKER_OFFSET | 13 | 查询Broker偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | GET_MAX_OFFSET | 30 | 获取最大偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | GET_MIN_OFFSET | 31 | 获取最小偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | SEARCH_OFFSET_BY_TIMESTAMP | 29 | 按时间戳搜索偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | GET_EARLIEST_MSG_STORETIME | 32 | 获取最早消息存储时间 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | GET_ALL_CONSUMER_OFFSET | 43 | 获取所有消费者偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | GET_ALL_DELAY_OFFSET | 45 | 获取所有延迟偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P1 | NOTIFY_CONSUMER_IDS_CHANGED | 40 | 通知消费者ID变更 | 代理推送至SDK客户端 | ✅ 已实现 | ClientManageProcessor |
 
 **涉及Header类**：
 - GetConsumerListByGroupRequestHeader / GetConsumerListByGroupResponseHeader
@@ -569,24 +569,24 @@
 
 ---
 
-### 阶段三：消息查询与Topic管理
+### 阶段三：消息查询与Topic管理 ✅ 已完成
 
 **目标**：支持消息查询、Topic管理、运维操作
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P2 | QUERY_MESSAGE | 12 | 查询消息 | 代理转发 |
-| P2 | VIEW_MESSAGE_BY_ID | 33 | 按ID查看消息 | 代理转发 |
-| P2 | UPDATE_AND_CREATE_TOPIC | 17 | 创建/更新Topic | 代理转发 |
-| P2 | GET_ALL_TOPIC_CONFIG | 21 | 获取所有Topic配置 | 代理转发 |
-| P2 | GET_TOPIC_CONFIG_LIST | 22 | 获取Topic配置列表 | 代理转发 |
-| P2 | GET_TOPIC_NAME_LIST | 23 | 获取Topic名称列表 | 代理转发 |
-| P2 | DELETE_TOPIC_IN_BROKER | 215 | 删除Broker上的Topic | 代理转发 |
-| P2 | GET_ALL_TOPIC_LIST_FROM_NAMESERVER | 206 | 获取所有Topic列表 | 代理转发 |
-| P2 | GET_BROKER_CLUSTER_INFO | 106 | 获取Broker集群信息 | 代理转发 |
-| P2 | UNREGISTER_BROKER | 104 | Broker注销 | 代理转发 |
-| P2 | GET_SYSTEM_TOPIC_LIST_FROM_BROKER | 305 | 获取系统Topic列表 | 代理转发 |
-| P2 | DELETE_TOPIC_IN_NAMESRV | 216 | 删除NameServer上的Topic | 代理转发 |
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 | 处理器 |
+|--------|--------|-----|------|---------|---------|--------|
+| P2 | QUERY_MESSAGE | 12 | 查询消息 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | VIEW_MESSAGE_BY_ID | 33 | 按ID查看消息 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | UPDATE_AND_CREATE_TOPIC | 17 | 创建/更新Topic | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_ALL_TOPIC_CONFIG | 21 | 获取所有Topic配置 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_TOPIC_CONFIG_LIST | 22 | 获取Topic配置列表 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_TOPIC_NAME_LIST | 23 | 获取Topic名称列表 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | DELETE_TOPIC_IN_BROKER | 215 | 删除Broker上的Topic | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_ALL_TOPIC_LIST_FROM_NAMESERVER | 206 | 获取所有Topic列表 | 转发到NameServer | ✅ 已实现 | NameServerProcessor |
+| P2 | GET_BROKER_CLUSTER_INFO | 106 | 获取Broker集群信息 | 转发到NameServer | ✅ 已实现 | NameServerProcessor |
+| P2 | UNREGISTER_BROKER | 104 | Broker注销 | 转发到NameServer | ✅ 已实现 | NameServerProcessor |
+| P2 | GET_SYSTEM_TOPIC_LIST_FROM_BROKER | 305 | 获取系统Topic列表 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | DELETE_TOPIC_IN_NAMESRV | 216 | 删除NameServer上的Topic | 转发到NameServer | ✅ 已实现 | NameServerProcessor |
 
 **涉及Header类**：
 - QueryMessageRequestHeader / QueryMessageResponseHeader
@@ -602,27 +602,27 @@
 
 ---
 
-### 阶段四：消费者运维与管理
+### 阶段四：消费者运维与管理 ✅ 已完成
 
 **目标**：支持消费者运维、订阅组管理、消费统计
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P2 | UPDATE_AND_CREATE_SUBSCRIPTIONGROUP | 200 | 创建/更新订阅组 | 代理转发 |
-| P2 | GET_ALL_SUBSCRIPTIONGROUP_CONFIG | 201 | 获取所有订阅组配置 | 代理转发 |
-| P2 | DELETE_SUBSCRIPTIONGROUP | 207 | 删除订阅组 | 代理转发 |
-| P2 | GET_CONSUMER_CONNECTION_LIST | 203 | 获取消费者连接列表 | 代理转发 |
-| P2 | GET_PRODUCER_CONNECTION_LIST | 204 | 获取生产者连接列表 | 代理转发 |
-| P2 | GET_CONSUME_STATS | 208 | 获取消费统计 | 代理转发 |
-| P2 | GET_TOPIC_STATS_INFO | 202 | 获取Topic统计信息 | 代理转发 |
-| P2 | QUERY_TOPIC_CONSUME_BY_WHO | 300 | 查询Topic被谁消费 | 代理转发 |
-| P2 | QUERY_CONSUME_TIME_SPAN | 303 | 查询消费时间跨度 | 代理转发 |
-| P2 | GET_CONSUMER_RUNNING_INFO | 307 | 获取消费者运行信息 | 代理转发 |
-| P2 | INVOKE_BROKER_TO_RESET_OFFSET | 222 | 通知Broker重置偏移量 | 代理转发 |
-| P2 | INVOKE_BROKER_TO_GET_CONSUMER_STATUS | 223 | 获取消费者状态 | 代理转发 |
-| P2 | CLONE_GROUP_OFFSET | 314 | 克隆组偏移量 | 代理转发 |
-| P2 | RESET_CONSUMER_OFFSET_IN_BROKER | 212 | 重置消费者偏移量 | 代理转发 |
-| P2 | GET_BROKER_CONSUME_STATS | 317 | 获取Broker消费统计 | 代理转发 |
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 | 处理器 |
+|--------|--------|-----|------|---------|---------|--------|
+| P2 | UPDATE_AND_CREATE_SUBSCRIPTIONGROUP | 200 | 创建/更新订阅组 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_ALL_SUBSCRIPTIONGROUP_CONFIG | 201 | 获取所有订阅组配置 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | DELETE_SUBSCRIPTIONGROUP | 207 | 删除订阅组 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_CONSUMER_CONNECTION_LIST | 203 | 获取消费者连接列表 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_PRODUCER_CONNECTION_LIST | 204 | 获取生产者连接列表 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_CONSUME_STATS | 208 | 获取消费统计 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_TOPIC_STATS_INFO | 202 | 获取Topic统计信息 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | QUERY_TOPIC_CONSUME_BY_WHO | 300 | 查询Topic被谁消费 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | QUERY_CONSUME_TIME_SPAN | 303 | 查询消费时间跨度 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_CONSUMER_RUNNING_INFO | 307 | 获取消费者运行信息 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | INVOKE_BROKER_TO_RESET_OFFSET | 222 | 通知Broker重置偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | INVOKE_BROKER_TO_GET_CONSUMER_STATUS | 223 | 获取消费者状态 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | CLONE_GROUP_OFFSET | 314 | 克隆组偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | RESET_CONSUMER_OFFSET_IN_BROKER | 212 | 重置消费者偏移量 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P2 | GET_BROKER_CONSUME_STATS | 317 | 获取Broker消费统计 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
 
 **涉及Header类**：
 - DeleteSubscriptionGroupRequestHeader
@@ -645,18 +645,20 @@
 
 ---
 
-### 阶段五：事务消息与RPC回复
+### 阶段五：事务消息与RPC回复 ⏳ 暂不实现
 
 **目标**：支持事务消息、RPC回复消息
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P3 | END_TRANSACTION | 37 | 结束事务 | 代理转发 |
-| P3 | CHECK_TRANSACTION_STATE | 39 | 事务状态回查 | 代理转发 |
-| P3 | SEND_REPLY_MESSAGE | 324 | 发送回复消息 | 代理转发 |
-| P3 | SEND_REPLY_MESSAGE_V2 | 325 | 发送回复消息V2 | 代理转发 |
-| P3 | PUSH_REPLY_MESSAGE_TO_CLIENT | 326 | 推送回复消息到客户端 | 代理转发 |
-| P3 | RESUME_CHECK_HALF_MESSAGE | 323 | 恢复检查半消息 | 代理转发 |
+> 当前业务场景不需要事务消息和RPC回复，暂不实现。END_TRANSACTION(37)已在RequestCode中定义但未注册处理器。
+
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 |
+|--------|--------|-----|------|---------|---------|
+| P3 | END_TRANSACTION | 37 | 结束事务 | 代理转发 | ❌ 已定义但未注册 |
+| P3 | CHECK_TRANSACTION_STATE | 39 | 事务状态回查 | 代理转发 | ❌ 未实现 |
+| P3 | SEND_REPLY_MESSAGE | 324 | 发送回复消息 | 代理转发 | ❌ 未实现 |
+| P3 | SEND_REPLY_MESSAGE_V2 | 325 | 发送回复消息V2 | 代理转发 | ❌ 未实现 |
+| P3 | PUSH_REPLY_MESSAGE_TO_CLIENT | 326 | 推送回复消息到客户端 | 代理转发 | ❌ 未实现 |
+| P3 | RESUME_CHECK_HALF_MESSAGE | 323 | 恢复检查半消息 | 代理转发 | ❌ 未实现 |
 
 **涉及Header类**：
 - EndTransactionRequestHeader / EndTransactionResponseHeader
@@ -671,40 +673,42 @@
 
 ---
 
-### 阶段六：ACL权限与高级运维
+### 阶段六：ACL权限与高级运维 🔧 部分完成（3/28）
 
 **目标**：支持ACL权限管理、高级运维操作
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P3 | UPDATE_AND_CREATE_ACL_CONFIG | 50 | 创建/更新ACL配置 | 代理转发 |
-| P3 | DELETE_ACL_CONFIG | 51 | 删除ACL配置 | 代理转发 |
-| P3 | GET_BROKER_CLUSTER_ACL_INFO | 52 | 获取Broker集群ACL信息 | 代理转发 |
-| P3 | UPDATE_GLOBAL_WHITE_ADDRS_CONFIG | 53 | 更新全局白名单 | 代理转发 |
-| P3 | UPDATE_BROKER_CONFIG | 25 | 更新Broker配置 | 代理转发 |
-| P3 | GET_BROKER_CONFIG | 26 | 获取Broker配置 | 代理转发 |
-| P3 | GET_BROKER_RUNTIME_INFO | 28 | 获取Broker运行信息 | 代理转发 |
-| P3 | TRIGGER_DELETE_FILES | 27 | 触发删除文件 | 代理转发 |
-| P3 | DELETE_EXPIRED_COMMITLOG | 329 | 删除过期CommitLog | 代理转发 |
-| P3 | CLEAN_EXPIRED_CONSUMEQUEUE | 306 | 清理过期消费队列 | 代理转发 |
-| P3 | CLEAN_UNUSED_TOPIC | 316 | 清理未使用Topic | 代理转发 |
-| P3 | QUERY_CORRECTION_OFFSET | 308 | 查询修正偏移量 | 代理转发 |
-| P3 | CONSUME_MESSAGE_DIRECTLY | 309 | 直接消费消息 | 代理转发 |
-| P3 | VIEW_BROKER_STATS_DATA | 315 | 查看Broker统计数据 | 代理转发 |
-| P3 | QUERY_CONSUME_QUEUE | 321 | 查询消费队列 | 代理转发 |
-| P3 | GET_ALL_PRODUCER_INFO | 328 | 获取所有生产者信息 | 代理转发 |
-| P3 | CHECK_CLIENT_CONFIG | 46 | 检查客户端配置 | 代理转发 |
-| P3 | REGISTER_FILTER_SERVER | 301 | 注册过滤服务器 | 代理转发 |
-| P3 | REGISTER_MESSAGE_FILTER_CLASS | 302 | 注册消息过滤类 | 代理转发 |
-| P3 | WIPE_WRITE_PERM_OF_BROKER | 205 | 清除Broker写权限 | 代理转发 |
-| P3 | ADD_WRITE_PERM_OF_BROKER | 327 | 增加Broker写权限 | 代理转发 |
-| P3 | SUSPEND_CONSUMER | 209 | 暂停消费者 | 代理转发 |
-| P3 | RESUME_CONSUMER | 210 | 恢复消费者 | 代理转发 |
-| P3 | ADJUST_CONSUMER_THREAD_POOL | 213 | 调整消费者线程池 | 代理转发 |
-| P3 | WHO_CONSUME_THE_MESSAGE | 214 | 查询谁消费了消息 | 代理转发 |
-| P3 | RESET_CONSUMER_CLIENT_OFFSET | 220 | 重置消费者客户端偏移量 | 代理转发 |
-| P3 | GET_CONSUMER_STATUS_FROM_CLIENT | 221 | 从客户端获取消费状态 | 代理转发 |
-| P3 | RESET_CONSUMER_OFFSET_IN_CONSUMER | 211 | 重置消费者偏移量(消费者侧) | 代理转发 |
+> 已实现的3个请求码（UPDATE_BROKER_CONFIG/GET_BROKER_CONFIG/GET_BROKER_RUNTIME_INFO）随阶段一至四的AdminBrokerProcessor转发逻辑一起完成，其余25个尚未实现。
+
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 | 处理器 |
+|--------|--------|-----|------|---------|---------|--------|
+| P3 | UPDATE_AND_CREATE_ACL_CONFIG | 50 | 创建/更新ACL配置 | 代理转发 | ❌ 未实现 | - |
+| P3 | DELETE_ACL_CONFIG | 51 | 删除ACL配置 | 代理转发 | ❌ 未实现 | - |
+| P3 | GET_BROKER_CLUSTER_ACL_INFO | 52 | 获取Broker集群ACL信息 | 代理转发 | ❌ 未实现 | - |
+| P3 | UPDATE_GLOBAL_WHITE_ADDRS_CONFIG | 53 | 更新全局白名单 | 代理转发 | ❌ 未实现 | - |
+| P3 | UPDATE_BROKER_CONFIG | 25 | 更新Broker配置 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P3 | GET_BROKER_CONFIG | 26 | 获取Broker配置 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P3 | GET_BROKER_RUNTIME_INFO | 28 | 获取Broker运行信息 | 转发到Broker | ✅ 已实现 | AdminBrokerProcessor |
+| P3 | TRIGGER_DELETE_FILES | 27 | 触发删除文件 | 代理转发 | ❌ 未实现 | - |
+| P3 | DELETE_EXPIRED_COMMITLOG | 329 | 删除过期CommitLog | 代理转发 | ❌ 未实现 | - |
+| P3 | CLEAN_EXPIRED_CONSUMEQUEUE | 306 | 清理过期消费队列 | 代理转发 | ❌ 未实现 | - |
+| P3 | CLEAN_UNUSED_TOPIC | 316 | 清理未使用Topic | 代理转发 | ❌ 未实现 | - |
+| P3 | QUERY_CORRECTION_OFFSET | 308 | 查询修正偏移量 | 代理转发 | ❌ 未实现 | - |
+| P3 | CONSUME_MESSAGE_DIRECTLY | 309 | 直接消费消息 | 代理转发 | ❌ 未实现 | - |
+| P3 | VIEW_BROKER_STATS_DATA | 315 | 查看Broker统计数据 | 代理转发 | ❌ 未实现 | - |
+| P3 | QUERY_CONSUME_QUEUE | 321 | 查询消费队列 | 代理转发 | ❌ 未实现 | - |
+| P3 | GET_ALL_PRODUCER_INFO | 328 | 获取所有生产者信息 | 代理转发 | ❌ 未实现 | - |
+| P3 | CHECK_CLIENT_CONFIG | 46 | 检查客户端配置 | 代理转发 | ❌ 未实现 | - |
+| P3 | REGISTER_FILTER_SERVER | 301 | 注册过滤服务器 | 代理转发 | ❌ 未实现 | - |
+| P3 | REGISTER_MESSAGE_FILTER_CLASS | 302 | 注册消息过滤类 | 代理转发 | ❌ 未实现 | - |
+| P3 | WIPE_WRITE_PERM_OF_BROKER | 205 | 清除Broker写权限 | 代理转发 | ❌ 未实现 | - |
+| P3 | ADD_WRITE_PERM_OF_BROKER | 327 | 增加Broker写权限 | 代理转发 | ❌ 未实现 | - |
+| P3 | SUSPEND_CONSUMER | 209 | 暂停消费者 | 代理转发 | ❌ 未实现 | - |
+| P3 | RESUME_CONSUMER | 210 | 恢复消费者 | 代理转发 | ❌ 未实现 | - |
+| P3 | ADJUST_CONSUMER_THREAD_POOL | 213 | 调整消费者线程池 | 代理转发 | ❌ 未实现 | - |
+| P3 | WHO_CONSUME_THE_MESSAGE | 214 | 查询谁消费了消息 | 代理转发 | ❌ 未实现 | - |
+| P3 | RESET_CONSUMER_CLIENT_OFFSET | 220 | 重置消费者客户端偏移量 | 代理转发 | ❌ 未实现 | - |
+| P3 | GET_CONSUMER_STATUS_FROM_CLIENT | 221 | 从客户端获取消费状态 | 代理转发 | ❌ 未实现 | - |
+| P3 | RESET_CONSUMER_OFFSET_IN_CONSUMER | 211 | 重置消费者偏移量(消费者侧) | 代理转发 | ❌ 未实现 | - |
 
 **涉及Header类**：
 - CreateAccessConfigRequestHeader
@@ -723,24 +727,26 @@
 
 ---
 
-### 阶段七：NameServer完整协议与KV管理
+### 阶段七：NameServer完整协议与KV管理 ⏳ 暂不实现
 
 **目标**：完整支持NameServer协议
 
-| 优先级 | 请求码 | 值 | 功能 | 适配方式 |
-|--------|--------|-----|------|---------|
-| P3 | PUT_KV_CONFIG | 100 | 存储KV配置 | 代理转发 |
-| P3 | GET_KV_CONFIG | 101 | 获取KV配置 | 代理转发 |
-| P3 | DELETE_KV_CONFIG | 102 | 删除KV配置 | 代理转发 |
-| P3 | GET_KVLIST_BY_NAMESPACE | 219 | 按命名空间获取KV列表 | 代理转发 |
-| P3 | GET_TOPICS_BY_CLUSTER | 224 | 按集群获取Topic列表 | 代理转发 |
-| P3 | GET_SYSTEM_TOPIC_LIST_FROM_NS | 304 | 获取系统Topic列表 | 代理转发 |
-| P3 | GET_UNIT_TOPIC_LIST | 311 | 获取单元Topic列表 | 代理转发 |
-| P3 | GET_HAS_UNIT_SUB_TOPIC_LIST | 312 | 获取含单元子Topic列表 | 代理转发 |
-| P3 | GET_HAS_UNIT_SUB_UNUNIT_TOPIC_LIST | 313 | 获取含单元子非单元Topic列表 | 代理转发 |
-| P3 | UPDATE_NAMESRV_CONFIG | 318 | 更新NameServer配置 | 代理转发 |
-| P3 | GET_NAMESRV_CONFIG | 319 | 获取NameServer配置 | 代理转发 |
-| P3 | QUERY_DATA_VERSION | 322 | 查询数据版本 | 代理转发 |
+> KV配置管理为单元化部署场景的功能，当前业务不需要。PUT_KV_CONFIG/GET_KV_CONFIG/DELETE_KV_CONFIG已在RequestCode中定义但未注册处理器。
+
+| 优先级 | 请求码 | 值 | 功能 | 适配方式 | 实现状态 |
+|--------|--------|-----|------|---------|---------|
+| P3 | PUT_KV_CONFIG | 100 | 存储KV配置 | 代理转发 | ❌ 已定义但未注册 |
+| P3 | GET_KV_CONFIG | 101 | 获取KV配置 | 代理转发 | ❌ 已定义但未注册 |
+| P3 | DELETE_KV_CONFIG | 102 | 删除KV配置 | 代理转发 | ❌ 已定义但未注册 |
+| P3 | GET_KVLIST_BY_NAMESPACE | 219 | 按命名空间获取KV列表 | 代理转发 | ❌ 未实现 |
+| P3 | GET_TOPICS_BY_CLUSTER | 224 | 按集群获取Topic列表 | 代理转发 | ❌ 未实现 |
+| P3 | GET_SYSTEM_TOPIC_LIST_FROM_NS | 304 | 获取系统Topic列表 | 代理转发 | ❌ 未实现 |
+| P3 | GET_UNIT_TOPIC_LIST | 311 | 获取单元Topic列表 | 代理转发 | ❌ 未实现 |
+| P3 | GET_HAS_UNIT_SUB_TOPIC_LIST | 312 | 获取含单元子Topic列表 | 代理转发 | ❌ 未实现 |
+| P3 | GET_HAS_UNIT_SUB_UNUNIT_TOPIC_LIST | 313 | 获取含单元子非单元Topic列表 | 代理转发 | ❌ 未实现 |
+| P3 | UPDATE_NAMESRV_CONFIG | 318 | 更新NameServer配置 | 代理转发 | ❌ 未实现 |
+| P3 | GET_NAMESRV_CONFIG | 319 | 获取NameServer配置 | 代理转发 | ❌ 未实现 |
+| P3 | QUERY_DATA_VERSION | 322 | 查询数据版本 | 代理转发 | ❌ 未实现 |
 
 **涉及Header类**：
 - GetTopicsByClusterRequestHeader
@@ -754,15 +760,38 @@
 
 ## 6. 适配统计
 
-| 阶段 | 请求码数量 | 核心目标 |
-|------|-----------|---------|
-| 阶段一 | 10 | 核心消息链路（最小可用） |
-| 阶段二 | 12 | 消费管理增强 |
-| 阶段三 | 12 | 消息查询与Topic管理 |
-| 阶段四 | 15 | 消费者运维与管理 |
-| 阶段五 | 6 | 事务消息与RPC回复 |
-| 阶段六 | 27 | ACL权限与高级运维 |
-| 阶段七 | 12 | NameServer完整协议与KV管理 |
-| **合计** | **94** | **完整协议兼容** |
+| 阶段 | 总请求码 | 已实现 | 状态 | 核心目标 |
+|------|---------|--------|------|---------|
+| 阶段一 | 10 | 10 | ✅ 完成 | 核心消息链路（最小可用） |
+| 阶段二 | 12 | 12 | ✅ 完成 | 消费管理增强 |
+| 阶段三 | 12 | 12 | ✅ 完成 | 消息查询与Topic管理 |
+| 阶段四 | 15 | 15 | ✅ 完成 | 消费者运维与管理 |
+| 阶段五 | 6 | 0 | ⏳ 暂不实现 | 事务消息与RPC回复 |
+| 阶段六 | 28 | 3 | 🔧 部分完成 | ACL权限与高级运维 |
+| 阶段七 | 12 | 0 | ⏳ 暂不实现 | NameServer完整协议与KV管理 |
+| **合计** | **85** | **52** | **61%** | **完整协议兼容** |
 
-> 注：部分请求码在不同处理器中重复出现（如GET_CONSUMER_RUNNING_INFO在Broker和Client都有），按实际使用场景归入对应阶段
+> 注：阶段六实际包含28个请求码（原统计为27个遗漏了RESET_CONSUMER_OFFSET_IN_CONSUMER），其中3个随AdminBrokerProcessor转发逻辑一起完成。阶段五和七为非核心业务场景，当前暂不实现。
+
+### 处理器覆盖明细
+
+| 处理器 | 已注册请求码数 | 说明 |
+|--------|-------------|------|
+| AdminBrokerProcessor | 32 | 偏移量查询4个+转发28个 |
+| NameServerProcessor | 6 | 虚拟路由2个+转发4个 |
+| ClientManageProcessor | 4 | 心跳/注销/消费者列表/变更通知 |
+| SendMessageProcessor | 3 | V1/V2/批量发送 |
+| ConsumerManageProcessor | 2 | 查询/更新消费偏移量 |
+| LockBatchMQProcessor | 2 | 锁定/解锁队列（代理内存锁） |
+| PullMessageProcessor | 1 | 消息拉取 |
+| ConsumerSendMsgBackProcessor | 1 | 消息发回 |
+| **合计** | **51** | |
+
+### 未注册请求码（RequestCode已定义但无处理器）
+
+| 请求码 | 值 | 原因 |
+|--------|-----|------|
+| END_TRANSACTION | 37 | 阶段五，暂不实现 |
+| PUT_KV_CONFIG | 100 | 阶段七，暂不实现 |
+| GET_KV_CONFIG | 101 | 阶段七，暂不实现 |
+| DELETE_KV_CONFIG | 102 | 阶段七，暂不实现 |

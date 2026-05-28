@@ -54,7 +54,7 @@ public class ConsumerDebugTest {
 
     @Before
     public void setUp() throws Exception {
-        String logDir = "F:" + File.separator + "logs" + File.separator + "rmq-client";
+        String logDir = System.getProperty("java.io.tmpdir") + File.separator + "rmq-client";
         System.setProperty(ClientLogger.CLIENT_LOG_ROOT, logDir);
         System.setProperty(ClientLogger.CLIENT_LOG_LEVEL, "DEBUG");
         System.out.println("=== Consumer log directory set to: " + logDir + " ===");

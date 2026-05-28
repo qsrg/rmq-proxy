@@ -9,6 +9,14 @@ public class NettyClientConfig {
     private int clientChannelMaxIdleTimeSeconds = 120;
     private int clientWorkerThreadNums = 4;
 
+    // TLS配置
+    private boolean tlsEnabled = false;
+    private String tlsTrustStorePath;
+    private String tlsTrustStorePassword;
+    private String tlsKeyStorePath;
+    private String tlsKeyStorePassword;
+    private String tlsKeyStoreType = "JKS";
+
     public String getNamesrvAddr() {
         return namesrvAddr;
     }
@@ -63,5 +71,53 @@ public class NettyClientConfig {
 
     public void setClientWorkerThreadNums(int clientWorkerThreadNums) {
         this.clientWorkerThreadNums = clientWorkerThreadNums;
+    }
+
+    public boolean isTlsEnabled() {
+        return tlsEnabled;
+    }
+
+    public void setTlsEnabled(boolean tlsEnabled) {
+        this.tlsEnabled = tlsEnabled;
+    }
+
+    public String getTlsTrustStorePath() {
+        return tlsTrustStorePath;
+    }
+
+    public void setTlsTrustStorePath(String tlsTrustStorePath) {
+        this.tlsTrustStorePath = tlsTrustStorePath;
+    }
+
+    public String getTlsTrustStorePassword() {
+        return tlsTrustStorePassword;
+    }
+
+    public void setTlsTrustStorePassword(String tlsTrustStorePassword) {
+        this.tlsTrustStorePassword = tlsTrustStorePassword;
+    }
+
+    public String getTlsKeyStorePath() {
+        return tlsKeyStorePath;
+    }
+
+    public void setTlsKeyStorePath(String tlsKeyStorePath) {
+        this.tlsKeyStorePath = tlsKeyStorePath;
+    }
+
+    public String getTlsKeyStorePassword() {
+        return tlsKeyStorePassword;
+    }
+
+    public void setTlsKeyStorePassword(String tlsKeyStorePassword) {
+        this.tlsKeyStorePassword = tlsKeyStorePassword;
+    }
+
+    public String getTlsKeyStoreType() {
+        return tlsKeyStoreType;
+    }
+
+    public void setTlsKeyStoreType(String tlsKeyStoreType) {
+        this.tlsKeyStoreType = tlsKeyStoreType;
     }
 }

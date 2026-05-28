@@ -2,7 +2,7 @@ package com.mq.proxy.sdk.facade;
 
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RequestCode;
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.producer.ProxyProducerConfig;
 import com.mq.proxy.sdk.exception.ProxyConnectException;
 import com.mq.proxy.sdk.exception.ProxyException;
 import com.mq.proxy.sdk.remoting.ProxyRemotingClient;
@@ -37,7 +37,7 @@ import static org.mockito.Mockito.*;
  */
 public class ProxyClientFacadeTest {
 
-    private ProxyClientConfig config;
+    private ProxyProducerConfig config;
 
     @Mock
     private ProxyRemotingClient mockRemotingClient;
@@ -61,7 +61,7 @@ public class ProxyClientFacadeTest {
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
 
-        config = new ProxyClientConfig();
+        config = new ProxyProducerConfig();
         config.setProxyAddrs("proxy1:10911;proxy2:10912;proxy3:10913");
         config.setRetryTimes(3);
         config.setRequestTimeoutMillis(3000);

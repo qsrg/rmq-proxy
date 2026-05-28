@@ -1,17 +1,17 @@
 package com.mq.proxy.sdk.facade;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.producer.ProxyProducerConfig;
 import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class ProxyAddressManagerTest {
     
-    private ProxyClientConfig config;
+    private ProxyProducerConfig config;
     
     @Before
     public void setUp() {
-        config = new ProxyClientConfig();
+        config = new ProxyProducerConfig();
     }
     
     @Test

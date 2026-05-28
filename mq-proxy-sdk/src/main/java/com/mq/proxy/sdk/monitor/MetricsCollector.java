@@ -1,6 +1,6 @@
 package com.mq.proxy.sdk.monitor;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.config.ProxyCommonConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,11 +12,11 @@ public class MetricsCollector {
     
     private static final Logger log = LoggerFactory.getLogger(MetricsCollector.class);
     
-    private final ProxyClientConfig config;
+    private final ProxyCommonConfig config;
     
     private final ConcurrentHashMap<String, ProxyMetrics> metricsTable = new ConcurrentHashMap<>();
     
-    public MetricsCollector(ProxyClientConfig config) {
+    public MetricsCollector(ProxyCommonConfig config) {
         this.config = config;
     }
     

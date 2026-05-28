@@ -1,18 +1,18 @@
 package com.mq.proxy.sdk.monitor;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.producer.ProxyProducerConfig;
 import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MetricsCollectorTest {
     
-    private ProxyClientConfig config;
+    private ProxyProducerConfig config;
     private MetricsCollector collector;
     
     @Before
     public void setUp() {
-        config = new ProxyClientConfig();
+        config = new ProxyProducerConfig();
         config.setEnableMetrics(true);
         collector = new MetricsCollector(config);
     }

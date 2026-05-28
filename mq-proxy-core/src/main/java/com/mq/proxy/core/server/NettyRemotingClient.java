@@ -14,8 +14,20 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.security.KeyStore;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +41,7 @@ public class NettyRemotingClient {
     private final NettyClientConfig nettyClientConfig;
     private Bootstrap bootstrap;
     private EventLoopGroup eventLoopGroup;
+    private SslContext sslContext;
     private final ConcurrentHashMap<String, Channel> channelTable = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, ResponseFuture> responseTable = new ConcurrentHashMap<>();
     private final AtomicInteger opaqueCounter = new AtomicInteger(0);
@@ -37,6 +50,46 @@ public class NettyRemotingClient {
 
     public NettyRemotingClient(NettyClientConfig nettyClientConfig) {
         this.nettyClientConfig = nettyClientConfig;
+        if (nettyClientConfig.isTlsEnabled()) {
+            try {
+                this.sslContext = buildSslContext();
+                log.info("TLS client enabled, SSL context initialized");
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to initialize client TLS SSL context", e);
+            }
+        }
+    }
+
+    private SslContext buildSslContext() throws Exception {
+        SslContextBuilder builder = SslContextBuilder.forClient();
+
+        if (nettyClientConfig.getTlsKeyStorePath() != null) {
+            KeyStore keyStore = KeyStore.getInstance(nettyClientConfig.getTlsKeyStoreType());
+            try (InputStream kis = new FileInputStream(nettyClientConfig.getTlsKeyStorePath())) {
+                keyStore.load(kis, nettyClientConfig.getTlsKeyStorePassword() != null
+                        ? nettyClientConfig.getTlsKeyStorePassword().toCharArray() : null);
+            }
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(keyStore, nettyClientConfig.getTlsKeyStorePassword() != null
+                    ? nettyClientConfig.getTlsKeyStorePassword().toCharArray() : null);
+            builder.keyManager(kmf);
+        }
+
+        if (nettyClientConfig.getTlsTrustStorePath() != null) {
+            KeyStore trustStore = KeyStore.getInstance(nettyClientConfig.getTlsKeyStoreType());
+            try (InputStream tis = new FileInputStream(nettyClientConfig.getTlsTrustStorePath())) {
+                trustStore.load(tis, nettyClientConfig.getTlsTrustStorePassword() != null
+                        ? nettyClientConfig.getTlsTrustStorePassword().toCharArray() : null);
+            }
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+            builder.trustManager(tmf);
+        } else {
+            builder.trustManager(InsecureTrustManagerFactory.INSTANCE);
+            log.warn("TLS enabled without trustStore, using InsecureTrustManagerFactory (not for production)");
+        }
+
+        return builder.build();
     }
 
     public void start() {
@@ -51,6 +104,10 @@ public class NettyRemotingClient {
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
+                        if (sslContext != null) {
+                            SSLEngine sslEngine = sslContext.newEngine(ch.alloc());
+                            ch.pipeline().addLast("ssl", new SslHandler(sslEngine));
+                        }
                         ch.pipeline().addLast(new RemotingCommandDecoder());
                         ch.pipeline().addLast(new RemotingCommandEncoder());
                         ch.pipeline().addLast(new NettyClientHandler());

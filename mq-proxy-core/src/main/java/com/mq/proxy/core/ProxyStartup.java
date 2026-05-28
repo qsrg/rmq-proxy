@@ -84,6 +84,13 @@ public class ProxyStartup {
         nettyServerConfig.setListenPort(proxyConfig.getListenPort());
         nettyServerConfig.setBossThreadNums(proxyConfig.getBossThreadNums());
         nettyServerConfig.setWorkerThreadNums(proxyConfig.getWorkerThreadNums());
+        nettyServerConfig.setTlsEnabled(proxyConfig.isTlsEnabled());
+        nettyServerConfig.setTlsKeyStorePath(proxyConfig.getTlsKeyStorePath());
+        nettyServerConfig.setTlsKeyStorePassword(proxyConfig.getTlsKeyStorePassword());
+        nettyServerConfig.setTlsTrustStorePath(proxyConfig.getTlsTrustStorePath());
+        nettyServerConfig.setTlsTrustStorePassword(proxyConfig.getTlsTrustStorePassword());
+        nettyServerConfig.setTlsKeyStoreType(proxyConfig.getTlsKeyStoreType());
+        nettyServerConfig.setTlsClientAuth(proxyConfig.isTlsClientAuth());
 
         NettyRemotingServer remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);

@@ -1,10 +1,9 @@
-package com.mq.proxy.sdk.client;
+package com.mq.proxy.sdk.consumer;
 
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
-import com.mq.proxy.core.protocol.header.SendMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.PullMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.QueryConsumerOffsetRequestHeader;
 import com.mq.proxy.core.protocol.header.UpdateConsumerOffsetRequestHeader;
@@ -22,18 +21,33 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-public class ProxyClient {
+/**
+ * Proxy消费者 - 简化API，类似RocketMQ使用方式
+ *
+ * <pre>
+ * // 简单使用（类似RocketMQ）
+ * ProxyConsumer consumer = new ProxyConsumer("ConsumerGroup");
+ * consumer.setProxyAddrs("127.0.0.1:10911");
+ * consumer.start();
+ * PullResult result = consumer.pull("Topic", "ConsumerGroup", 0, 0L, 32);
+ * consumer.shutdown();
+ *
+ * // 链式配置
+ * ProxyConsumer consumer = new ProxyConsumer("ConsumerGroup")
+ *     .setProxyAddrs("127.0.0.1:10911")
+ *     .setSuspendTimeoutMillis(15000); // 长轮询
+ * consumer.start();
+ * </pre>
+ */
+public class ProxyConsumer {
 
-    private static final Logger log = LoggerFactory.getLogger(ProxyClient.class);
+    private static final Logger log = LoggerFactory.getLogger(ProxyConsumer.class);
 
-    // RocketMQ PullSysFlag: FLAG_SUSPEND = 0x1 << 1
     private static final int FLAG_SUSPEND = 0x02;
-
-    // RocketMQ: QUERY_NOT_FOUND = 206
     private static final int QUERY_NOT_FOUND = 206;
 
-    private final ProxyClientConfig config;
-    private final ProxyClientFacade facade;
+    private final ProxyConsumerConfig config;
+    private ProxyClientFacade facade; // 延迟初始化（start时创建）
 
     private volatile boolean started = false;
 
@@ -42,29 +56,224 @@ public class ProxyClient {
     private final CopyOnWriteArrayList<ConsumerChangeListener> consumerChangeListeners =
         new CopyOnWriteArrayList<>();
 
-    public ProxyClient(ProxyClientConfig config) {
-        this.config = config;
-        this.facade = new ProxyClientFacade(config);
+    /**
+     * 简化构造函数 - 推荐使用方式（类似RocketMQ）
+     *
+     * @param consumerGroup 消费者组名
+     */
+    public ProxyConsumer(String consumerGroup) {
+        this.config = new ProxyConsumerConfig();
+        this.config.setConsumerGroup(consumerGroup);
+        this.facade = null; // 延迟初始化
     }
 
-    ProxyClient(ProxyClientConfig config, ProxyClientFacade facade) {
+    /**
+     * 完整配置构造函数 - 高级配置场景
+     *
+     * @param config 消费者配置
+     */
+    public ProxyConsumer(ProxyConsumerConfig config) {
         this.config = config;
-        this.facade = facade;
+        this.facade = null; // 延迟初始化
     }
+
+    // ========== 链式配置方法（推荐使用） ==========
+
+    public ProxyConsumer setProxyAddrs(String proxyAddrs) {
+        this.config.setProxyAddrs(proxyAddrs);
+        return this;
+    }
+
+    public ProxyConsumer setSuspendTimeoutMillis(long suspendTimeoutMillis) {
+        this.config.setSuspendTimeoutMillis(suspendTimeoutMillis);
+        return this;
+    }
+
+    public ProxyConsumer setMessageModel(String messageModel) {
+        this.config.setMessageModel(messageModel);
+        return this;
+    }
+
+    public ProxyConsumer setRequestTimeoutMillis(int timeoutMillis) {
+        this.config.setRequestTimeoutMillis(timeoutMillis);
+        return this;
+    }
+
+    public ProxyConsumer setRetryTimes(int retryTimes) {
+        this.config.setRetryTimes(retryTimes);
+        return this;
+    }
+
+    public ProxyConsumer setEnableMetrics(boolean enableMetrics) {
+        this.config.setEnableMetrics(enableMetrics);
+        return this;
+    }
+
+    public ProxyConsumer setEnableTrace(boolean enableTrace) {
+        this.config.setEnableTrace(enableTrace);
+        return this;
+    }
+
+    public ProxyConsumer setTlsEnabled(boolean tlsEnabled) {
+        this.config.setTlsEnabled(tlsEnabled);
+        return this;
+    }
+
+    // ========== 启动和关闭 ==========
 
     public void start() {
         if (!started) {
+            if (facade == null) {
+                facade = new ProxyClientFacade(config);
+            }
             facade.start();
             registerNotifyProcessor();
             sendConsumerRegistration();
             started = true;
-            log.info("ProxyClient started, proxy addresses: {}, messageModel: {}",
-                    config.getProxyAddrs(), config.getMessageModel());
+            log.info("ProxyConsumer started, group={}, proxyAddrs={}, messageModel={}",
+                config.getConsumerGroup(), config.getProxyAddrs(), config.getMessageModel());
+        }
+    }
+
+    public void shutdown() {
+        if (started) {
+            if (facade != null) {
+                facade.shutdown();
+            }
+            started = false;
+            log.info("ProxyConsumer shutdown, group={}", config.getConsumerGroup());
+        }
+    }
+
+    // ========== 消费消息 ==========
+
+    public void registerConsumerChangeListener(ConsumerChangeListener listener) {
+        consumerChangeListeners.add(listener);
+    }
+
+    public PullResult pull(String topic, String consumerGroup,
+                          int queueId, long offset, int maxNums) throws ProxyException {
+
+        ensureStarted();
+
+        try {
+            RemotingCommand request = buildPullMessageRequest(topic, consumerGroup, queueId, offset, maxNums);
+
+            long pullTimeout = config.getRequestTimeoutMillis();
+            long suspendTimeout = config.getSuspendTimeoutMillis();
+            if (suspendTimeout > 0) {
+                pullTimeout = suspendTimeout + config.getRequestTimeoutMillis();
+            }
+
+            RemotingCommand response = facade.invokeSync(request, pullTimeout);
+
+            return parsePullResult(response);
+
+        } catch (Exception e) {
+            if (e instanceof ProxyException) {
+                throw e;
+            }
+            throw new ProxyException("Pull message failed", e);
+        }
+    }
+
+    public long queryConsumerOffset(String consumerGroup, String topic, int queueId) throws ProxyException {
+        ensureStarted();
+
+        if ("BROADCASTING".equals(config.getMessageModel())) {
+            long localOffset = localOffsetStore.getOffset(consumerGroup, topic, queueId);
+            if (localOffset >= 0) {
+                return localOffset;
+            }
+            return -1L;
+        }
+
+        QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
+        header.setConsumerGroup(consumerGroup);
+        header.setTopic(topic);
+        header.setQueueId(queueId);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, header);
+        request.makeCustomHeaderToNet();
+
+        try {
+            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
+
+            if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
+                HashMap<String, String> extFields = response.getExtFields();
+                if (extFields != null && extFields.get("offset") != null) {
+                    return Long.parseLong(extFields.get("offset"));
+                }
+                return -1L;
+            }
+            if (response.getCode() == QUERY_NOT_FOUND) {
+                return -1L;
+            }
+            throw new ProxyException("Query consumer offset failed, code=" + response.getCode());
+        } catch (Exception e) {
+            if (e instanceof ProxyException) {
+                throw e;
+            }
+            throw new ProxyException("Query consumer offset failed", e);
+        }
+    }
+
+    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset)
+            throws ProxyException {
+        ensureStarted();
+
+        if ("BROADCASTING".equals(config.getMessageModel())) {
+            localOffsetStore.updateOffset(consumerGroup, topic, queueId, commitOffset);
+            return;
+        }
+
+        UpdateConsumerOffsetRequestHeader header = new UpdateConsumerOffsetRequestHeader();
+        header.setConsumerGroup(consumerGroup);
+        header.setTopic(topic);
+        header.setQueueId(queueId);
+        header.setCommitOffset(commitOffset);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, header);
+        request.makeCustomHeaderToNet();
+
+        try {
+            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
+
+            if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
+                throw new ProxyException("Update consumer offset failed, code=" + response.getCode());
+            }
+        } catch (Exception e) {
+            if (e instanceof ProxyException) {
+                throw e;
+            }
+            throw new ProxyException("Update consumer offset failed", e);
+        }
+    }
+
+    // ========== 监控 ==========
+
+    public Map<String, ProxyMetricsSnapshot> getMetrics() {
+        ensureStarted();
+        return facade.getMetricsCollector().getSnapshot();
+    }
+
+    public ProxyConsumerConfig getConfig() {
+        return config;
+    }
+
+    // ========== 私有方法 ==========
+
+    private void ensureStarted() {
+        if (!started) {
+            throw new IllegalStateException("ProxyConsumer not started, call start() first");
+        }
+        if (facade == null) {
+            throw new IllegalStateException("ProxyConsumer facade not initialized");
         }
     }
 
     private void sendConsumerRegistration() {
-        String consumerGroup = config.getProducerGroup();
+        String consumerGroup = config.getConsumerGroup();
         if (consumerGroup == null || consumerGroup.isEmpty()) {
             return;
         }
@@ -98,245 +307,20 @@ public class ProxyClient {
                 @Override
                 public void processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
                     HashMap<String, String> extFields = request.getExtFields();
-                    String consumerGroup = extFields != null ? extFields.get("consumerGroup") : null;
-                    if (consumerGroup != null) {
-                        log.info("Received NOTIFY_CONSUMER_IDS_CHANGED for group {}", consumerGroup);
+                    String group = extFields != null ? extFields.get("consumerGroup") : null;
+                    if (group != null) {
+                        log.info("Received NOTIFY_CONSUMER_IDS_CHANGED for group {}", group);
                         for (ConsumerChangeListener listener : consumerChangeListeners) {
-                            listener.onConsumerIdsChanged(consumerGroup);
+                            listener.onConsumerIdsChanged(group);
                         }
                     }
                 }
             });
     }
 
-    public void registerConsumerChangeListener(ConsumerChangeListener listener) {
-        consumerChangeListeners.add(listener);
-    }
-
-    public SendResult send(String topic, String tags, byte[] body) throws ProxyException {
-        return send(topic, tags, null, body);
-    }
-
-    public SendResult send(String topic, String tags, String keys, byte[] body)
-            throws ProxyException {
-
-        String traceId = null;
-        if (config.isEnableTrace()) {
-            traceId = facade.getTraceCollector().generateTraceId();
-        }
-
-        long startTime = System.currentTimeMillis();
-
-        try {
-            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, traceId);
-
-            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
-
-            SendResult result = parseSendResult(response);
-            result.setTraceId(traceId);
-
-            if (config.isEnableTrace()) {
-                facade.getTraceCollector().recordSendTrace(traceId, topic, result.getMsgId(),
-                    startTime, result.isSuccess(), result.isSuccess() ? null : result.getErrorMsg());
-            }
-
-            return result;
-
-        } catch (Exception e) {
-            if (config.isEnableTrace() && traceId != null) {
-                facade.getTraceCollector().recordSendTrace(traceId, topic, null,
-                    startTime, false, e.getMessage());
-            }
-
-            if (e instanceof ProxyException) {
-                throw e;
-            }
-            throw new ProxyException("Send message failed", e);
-        }
-    }
-
-    public PullResult pull(String topic, String consumerGroup,
-                          int queueId, long offset, int maxNums) throws ProxyException {
-
-        try {
-            RemotingCommand request = buildPullMessageRequest(topic, consumerGroup, queueId, offset, maxNums);
-
-            // 长轮询时broker可能等待suspendTimeoutMillis才返回，
-            // SDK必须等足够久才能收到broker的响应
-            long pullTimeout = config.getRequestTimeoutMillis();
-            long suspendTimeout = config.getSuspendTimeoutMillis();
-            if (suspendTimeout > 0) {
-                pullTimeout = suspendTimeout + config.getRequestTimeoutMillis();
-            }
-
-            RemotingCommand response = facade.invokeSync(request, pullTimeout);
-
-            return parsePullResult(response);
-
-        } catch (Exception e) {
-            if (e instanceof ProxyException) {
-                throw e;
-            }
-            throw new ProxyException("Pull message failed", e);
-        }
-    }
-
-    public long queryConsumerOffset(String consumerGroup, String topic, int queueId) throws ProxyException {
-        // 广播模式使用本地偏移量
-        if ("BROADCASTING".equals(config.getMessageModel())) {
-            long localOffset = localOffsetStore.getOffset(consumerGroup, topic, queueId);
-            if (localOffset >= 0) {
-                return localOffset;
-            }
-            // 首次消费返回-1，让消费者决定从哪里开始
-            return -1L;
-        }
-
-        QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
-        header.setConsumerGroup(consumerGroup);
-        header.setTopic(topic);
-        header.setQueueId(queueId);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, header);
-        request.makeCustomHeaderToNet();
-
-        try {
-            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
-
-            if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
-                HashMap<String, String> extFields = response.getExtFields();
-                if (extFields != null && extFields.get("offset") != null) {
-                    return Long.parseLong(extFields.get("offset"));
-                }
-                return -1L;
-            }
-            if (response.getCode() == QUERY_NOT_FOUND) {
-                // 新消费者首次查询offset，broker返回206表示"从未消费过"
-                // 返回-1让消费者决定从head或tail开始
-                return -1L;
-            }
-            throw new ProxyException("Query consumer offset failed, code=" + response.getCode());
-        } catch (Exception e) {
-            if (e instanceof ProxyException) {
-                throw e;
-            }
-            throw new ProxyException("Query consumer offset failed", e);
-        }
-    }
-
-    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset)
-            throws ProxyException {
-        // 广播模式本地存储偏移量，不向broker提交
-        if ("BROADCASTING".equals(config.getMessageModel())) {
-            localOffsetStore.updateOffset(consumerGroup, topic, queueId, commitOffset);
-            return;
-        }
-
-        UpdateConsumerOffsetRequestHeader header = new UpdateConsumerOffsetRequestHeader();
-        header.setConsumerGroup(consumerGroup);
-        header.setTopic(topic);
-        header.setQueueId(queueId);
-        header.setCommitOffset(commitOffset);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, header);
-        request.makeCustomHeaderToNet();
-
-        try {
-            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
-
-            if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
-                throw new ProxyException("Update consumer offset failed, code=" + response.getCode());
-            }
-        } catch (Exception e) {
-            if (e instanceof ProxyException) {
-                throw e;
-            }
-            throw new ProxyException("Update consumer offset failed", e);
-        }
-    }
-
-    public void shutdown() {
-        if (started) {
-            facade.shutdown();
-            started = false;
-            log.info("ProxyClient shutdown");
-        }
-    }
-
-    public Map<String, ProxyMetricsSnapshot> getMetrics() {
-        return facade.getMetricsCollector().getSnapshot();
-    }
-
-    private RemotingCommand buildSendMessageRequest(String topic, String tags, String keys,
-                                                    byte[] body, String traceId) {
-        SendMessageRequestHeader header = new SendMessageRequestHeader();
-        header.setProducerGroup(config.getProducerGroup());
-        header.setTopic(topic);
-        header.setDefaultTopic("TBW102");
-        header.setDefaultTopicQueueNums(4);
-        header.setQueueId(-1);
-        header.setSysFlag(0);
-        header.setBornTimestamp(System.currentTimeMillis());
-        header.setFlag(0);
-
-        String properties = buildMessageProperties(tags, keys, traceId);
-        header.setProperties(properties);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, header);
-        request.setBody(body);
-        request.makeCustomHeaderToNet();
-
-        return request;
-    }
-
-    private String buildMessageProperties(String tags, String keys, String traceId) {
-        StringBuilder sb = new StringBuilder();
-        if (tags != null && !tags.isEmpty()) {
-            sb.append("TAGS").append((char) 1).append(tags);
-        }
-        if (keys != null && !keys.isEmpty()) {
-            if (sb.length() > 0) {
-                sb.append((char) 2);
-            }
-            sb.append("KEYS").append((char) 1).append(keys);
-        }
-        if (traceId != null && !traceId.isEmpty()) {
-            if (sb.length() > 0) {
-                sb.append((char) 2);
-            }
-            sb.append("TRACE_ID").append((char) 1).append(traceId);
-        }
-        return sb.toString();
-    }
-
-    private SendResult parseSendResult(RemotingCommand response) {
-        SendResult result = new SendResult();
-
-        if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
-            result.setSuccess(true);
-            HashMap<String, String> extFields = response.getExtFields();
-            if (extFields != null) {
-                result.setMsgId(extFields.get("msgId"));
-                if (extFields.get("queueId") != null) {
-                    result.setQueueId(Integer.parseInt(extFields.get("queueId")));
-                }
-                if (extFields.get("queueOffset") != null) {
-                    result.setQueueOffset(Long.parseLong(extFields.get("queueOffset")));
-                }
-            }
-        } else {
-            result.setSuccess(false);
-            result.setErrorMsg(response.getRemark() != null ? response.getRemark() :
-                "Send failed with code=" + response.getCode());
-        }
-
-        return result;
-    }
-
     private RemotingCommand buildPullMessageRequest(String topic, String consumerGroup,
                                                     int queueId, long offset, int maxNums) {
         long suspendTimeout = config.getSuspendTimeoutMillis();
-        // suspendTimeout > 0时设置SUSPEND标志位，broker才真正等待消息到达
         int sysFlag = suspendTimeout > 0 ? FLAG_SUSPEND : 0;
 
         PullMessageRequestHeader header = new PullMessageRequestHeader();
@@ -404,9 +388,6 @@ public class ProxyClient {
         }
     }
 
-    /**
-     * 广播模式本地偏移量存储
-     */
     private static class LocalOffsetStore {
         private final ConcurrentHashMap<String, Long> offsetTable = new ConcurrentHashMap<>();
 

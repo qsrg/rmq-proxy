@@ -1,6 +1,6 @@
 package com.mq.proxy.sdk.trace;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.config.ProxyCommonConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +14,7 @@ public class TraceCollector {
     
     private static final Logger log = LoggerFactory.getLogger(TraceCollector.class);
     
-    private final ProxyClientConfig config;
+    private final ProxyCommonConfig config;
     
     private final AtomicLong traceIdSequence = new AtomicLong(0);
     
@@ -22,7 +22,9 @@ public class TraceCollector {
     
     private final ExecutorService traceExecutor = Executors.newSingleThreadExecutor();
     
-    public TraceCollector(ProxyClientConfig config) {
+    private final AtomicLong recordedCount = new AtomicLong(0);
+    
+    public TraceCollector(ProxyCommonConfig config) {
         this.config = config;
         startTraceWriter();
     }
@@ -46,9 +48,15 @@ public class TraceCollector {
         record.setErrorMsg(errorMsg);
         record.setRecordTime(System.currentTimeMillis());
         
+        recordedCount.incrementAndGet();
+        
         if (!traceQueue.offer(record)) {
             log.warn("Trace queue is full, drop trace: {}", traceId);
         }
+    }
+    
+    public long getRecordedCount() {
+        return recordedCount.get();
     }
     
     private void startTraceWriter() {

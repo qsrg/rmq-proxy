@@ -1,6 +1,6 @@
 package com.mq.proxy.sdk.facade;
 
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.config.ProxyCommonConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +14,7 @@ public class ProxyAddressManager {
     
     private static final Logger log = LoggerFactory.getLogger(ProxyAddressManager.class);
     
-    private final ProxyClientConfig config;
+    private final ProxyCommonConfig config;
     
     private final List<String> proxyAddrList;
     
@@ -22,7 +22,7 @@ public class ProxyAddressManager {
     
     private final ConcurrentHashMap<String, Long> faultAddrTable = new ConcurrentHashMap<>();
     
-    public ProxyAddressManager(ProxyClientConfig config) {
+    public ProxyAddressManager(ProxyCommonConfig config) {
         this.config = config;
         this.proxyAddrList = parseProxyAddrs(config.getProxyAddrs());
         log.info("Proxy address list initialized: {}", proxyAddrList);

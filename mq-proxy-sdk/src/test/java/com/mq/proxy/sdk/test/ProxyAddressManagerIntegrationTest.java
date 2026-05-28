@@ -1,7 +1,7 @@
 package com.mq.proxy.sdk.test;
 
 import com.mq.proxy.sdk.facade.ProxyAddressManager;
-import com.mq.proxy.sdk.client.ProxyClientConfig;
+import com.mq.proxy.sdk.producer.ProxyProducerConfig;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -9,7 +9,7 @@ public class ProxyAddressManagerIntegrationTest {
     
     @Test
     public void testAddressManagerBasic() {
-        ProxyClientConfig config = new ProxyClientConfig();
+        ProxyProducerConfig config = new ProxyProducerConfig();
         config.setProxyAddrs("127.0.0.1:11911;127.0.0.1:11912;127.0.0.1:11913");
         config.setFaultIsolationDurationMillis(30000);
         
@@ -24,7 +24,7 @@ public class ProxyAddressManagerIntegrationTest {
     
     @Test
     public void testFaultIsolation() {
-        ProxyClientConfig config = new ProxyClientConfig();
+        ProxyProducerConfig config = new ProxyProducerConfig();
         config.setProxyAddrs("127.0.0.1:11911;127.0.0.1:11912");
         config.setFaultIsolationDurationMillis(60000);
         
@@ -40,7 +40,7 @@ public class ProxyAddressManagerIntegrationTest {
     
     @Test
     public void testFaultRecovery() {
-        ProxyClientConfig config = new ProxyClientConfig();
+        ProxyProducerConfig config = new ProxyProducerConfig();
         config.setProxyAddrs("127.0.0.1:11911;127.0.0.1:11912");
         config.setFaultIsolationDurationMillis(1000);
         

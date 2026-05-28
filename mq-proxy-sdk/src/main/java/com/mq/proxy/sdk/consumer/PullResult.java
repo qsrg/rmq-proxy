@@ -1,4 +1,4 @@
-package com.mq.proxy.sdk.client;
+package com.mq.proxy.sdk.consumer;
 
 public class PullResult {
 

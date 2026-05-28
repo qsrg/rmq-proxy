@@ -16,11 +16,23 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.security.KeyStore;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -46,9 +58,45 @@ public class NettyRemotingServer {
     private ScheduledExecutorService channelScanExecutor;
 
     private ClientConnectionManager clientConnectionManager;
+    private SslContext sslContext;
 
     public NettyRemotingServer(NettyServerConfig nettyServerConfig) {
         this.nettyServerConfig = nettyServerConfig;
+        if (nettyServerConfig.isTlsEnabled()) {
+            try {
+                this.sslContext = buildSslContext();
+                log.info("TLS enabled, SSL context initialized");
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to initialize TLS SSL context", e);
+            }
+        }
+    }
+
+    private SslContext buildSslContext() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(nettyServerConfig.getTlsKeyStoreType());
+        try (InputStream kis = new FileInputStream(nettyServerConfig.getTlsKeyStorePath())) {
+            keyStore.load(kis, nettyServerConfig.getTlsKeyStorePassword() != null
+                    ? nettyServerConfig.getTlsKeyStorePassword().toCharArray() : null);
+        }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, nettyServerConfig.getTlsKeyStorePassword() != null
+                ? nettyServerConfig.getTlsKeyStorePassword().toCharArray() : null);
+
+        SslContextBuilder builder = SslContextBuilder.forServer(kmf);
+
+        if (nettyServerConfig.isTlsClientAuth()) {
+            KeyStore trustStore = KeyStore.getInstance(nettyServerConfig.getTlsKeyStoreType());
+            try (InputStream tis = new FileInputStream(nettyServerConfig.getTlsTrustStorePath())) {
+                trustStore.load(tis, nettyServerConfig.getTlsTrustStorePassword() != null
+                        ? nettyServerConfig.getTlsTrustStorePassword().toCharArray() : null);
+            }
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+            builder.trustManager(tmf).clientAuth(ClientAuth.REQUIRE);
+        }
+
+        return builder.build();
     }
 
     public void setClientConnectionManager(ClientConnectionManager clientConnectionManager) {
@@ -72,6 +120,10 @@ public class NettyRemotingServer {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
+                        if (sslContext != null) {
+                            SSLEngine sslEngine = sslContext.newEngine(ch.alloc());
+                            ch.pipeline().addLast("ssl", new SslHandler(sslEngine));
+                        }
                         ch.pipeline().addLast("frameDecoder",
                                 new LengthFieldBasedFrameDecoder(16777216, 0, 4, 0, 0));
                         ch.pipeline().addLast("idleStateHandler",
