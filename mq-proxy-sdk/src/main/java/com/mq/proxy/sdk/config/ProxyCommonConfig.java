@@ -21,13 +21,10 @@ public class ProxyCommonConfig {
     private long idleChannelScanIntervalMillis = 60000L;
     private long idleChannelTimeoutMillis = 120000L;
 
-    // TLS配置
     private boolean tlsEnabled = false;
-    private String tlsTrustStorePath;
-    private String tlsTrustStorePassword;
-    private String tlsKeyStorePath;
-    private String tlsKeyStorePassword;
-    private String tlsKeyStoreType = "JKS";
+    private String tlsTrustCertPath;
+    private String tlsClientCertPath;
+    private String tlsClientKeyPath;
 
     public String getProxyAddrs() {
         return proxyAddrs;
@@ -128,48 +125,30 @@ public class ProxyCommonConfig {
         return this;
     }
 
-    public String getTlsTrustStorePath() {
-        return tlsTrustStorePath;
+    public String getTlsTrustCertPath() {
+        return tlsTrustCertPath;
     }
 
-    public ProxyCommonConfig setTlsTrustStorePath(String tlsTrustStorePath) {
-        this.tlsTrustStorePath = tlsTrustStorePath;
+    public ProxyCommonConfig setTlsTrustCertPath(String tlsTrustCertPath) {
+        this.tlsTrustCertPath = tlsTrustCertPath;
         return this;
     }
 
-    public String getTlsTrustStorePassword() {
-        return tlsTrustStorePassword;
+    public String getTlsClientCertPath() {
+        return tlsClientCertPath;
     }
 
-    public ProxyCommonConfig setTlsTrustStorePassword(String tlsTrustStorePassword) {
-        this.tlsTrustStorePassword = tlsTrustStorePassword;
+    public ProxyCommonConfig setTlsClientCertPath(String tlsClientCertPath) {
+        this.tlsClientCertPath = tlsClientCertPath;
         return this;
     }
 
-    public String getTlsKeyStorePath() {
-        return tlsKeyStorePath;
+    public String getTlsClientKeyPath() {
+        return tlsClientKeyPath;
     }
 
-    public ProxyCommonConfig setTlsKeyStorePath(String tlsKeyStorePath) {
-        this.tlsKeyStorePath = tlsKeyStorePath;
-        return this;
-    }
-
-    public String getTlsKeyStorePassword() {
-        return tlsKeyStorePassword;
-    }
-
-    public ProxyCommonConfig setTlsKeyStorePassword(String tlsKeyStorePassword) {
-        this.tlsKeyStorePassword = tlsKeyStorePassword;
-        return this;
-    }
-
-    public String getTlsKeyStoreType() {
-        return tlsKeyStoreType;
-    }
-
-    public ProxyCommonConfig setTlsKeyStoreType(String tlsKeyStoreType) {
-        this.tlsKeyStoreType = tlsKeyStoreType;
+    public ProxyCommonConfig setTlsClientKeyPath(String tlsClientKeyPath) {
+        this.tlsClientKeyPath = tlsClientKeyPath;
         return this;
     }
 }

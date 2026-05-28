@@ -11,27 +11,15 @@ public interface StorageAdapter {
 
     void shutdown();
 
-    PutResult putMessage(InternalMessage message) throws Exception;
-
     PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception;
-
-    PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType) throws Exception;
 
     PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception;
 
-    OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId) throws Exception;
-
     OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception;
-
-    void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset) throws Exception;
 
     void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset, String brokerAddr) throws Exception;
 
     boolean healthCheck();
-
-    String getAdapterName();
-
-    RemotingCommand forwardToBroker(RemotingCommand request) throws Exception;
 
     RemotingCommand forwardToBroker(RemotingCommand request, String brokerAddr) throws Exception;
 }

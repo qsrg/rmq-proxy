@@ -4,10 +4,7 @@ import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
-import com.mq.proxy.core.protocol.header.SendMessageRequestHeader;
-import com.mq.proxy.core.protocol.header.SendMessageRequestHeaderV2;
 import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageAdapterManager;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PutResult;
 import org.junit.Before;
@@ -21,16 +18,13 @@ import static org.mockito.Mockito.*;
 public class SendMessageProcessorTest {
 
     private MessageEngine messageEngine;
-    private StorageAdapterManager storageAdapterManager;
     private StorageAdapter mockAdapter;
     private SendMessageProcessor processor;
 
     @Before
     public void setUp() {
-        storageAdapterManager = new StorageAdapterManager();
         mockAdapter = mock(StorageAdapter.class);
-        storageAdapterManager.registerAdapter("default", mockAdapter, true);
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(mockAdapter);
         processor = new SendMessageProcessor(messageEngine);
     }
 

@@ -6,7 +6,6 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageAdapterManager;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -18,17 +17,14 @@ import static org.mockito.Mockito.*;
 public class AdminBrokerProcessorTest {
 
     private MessageEngine messageEngine;
-    private StorageAdapterManager storageAdapterManager;
     private StorageAdapter mockAdapter;
     private AdminBrokerProcessor processor;
     private VirtualRouteManager mockRouteManager;
 
     @Before
     public void setUp() {
-        storageAdapterManager = new StorageAdapterManager();
         mockAdapter = mock(StorageAdapter.class);
-        storageAdapterManager.registerAdapter("default", mockAdapter, true);
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(mockAdapter);
         processor = new AdminBrokerProcessor(messageEngine);
         mockRouteManager = mock(VirtualRouteManager.class);
         processor.setVirtualRouteManager(mockRouteManager);
@@ -144,21 +140,6 @@ public class AdminBrokerProcessorTest {
         RemotingCommand response = processor.processRequest(null, request);
 
         assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
-    }
-
-    @Test
-    public void testNoAdapter() throws Exception {
-        StorageAdapterManager emptyManager = new StorageAdapterManager();
-        MessageEngine emptyEngine = new MessageEngine(emptyManager);
-        AdminBrokerProcessor emptyProcessor = new AdminBrokerProcessor(emptyEngine);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_MAX_OFFSET, null);
-        request.setExtFields(new HashMap<>());
-
-        RemotingCommand response = emptyProcessor.processRequest(null, request);
-
-        assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
-        assertTrue(response.getRemark().contains("no storage adapter"));
     }
 
     @Test

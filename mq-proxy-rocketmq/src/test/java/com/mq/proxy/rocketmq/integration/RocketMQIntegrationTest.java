@@ -14,7 +14,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapterManager;
+import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
 import com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter;
@@ -40,7 +40,7 @@ public class RocketMQIntegrationTest {
     private NettyRemotingServer proxyServer;
     private NettyRemotingClient proxyClient;
     private int proxyPort;
-    private StorageAdapterManager storageAdapterManager;
+    private StorageAdapter storageAdapter;
     private MessageEngine messageEngine;
     private VirtualRouteManager virtualRouteManager;
     private ClientConnectionManager clientConnectionManager;
@@ -57,25 +57,22 @@ public class RocketMQIntegrationTest {
 
         proxyPort = findAvailablePort();
 
-        storageAdapterManager = new StorageAdapterManager();
         StorageConfig rocketmqConfig = new StorageConfig();
-        rocketmqConfig.setAdapterType("rocketmq");
         rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
         rocketmqConfig.setBrokerAddr(brokerAddr);
         rocketmqConfig.setConnectTimeoutMillis(5000);
 
-        RocketMQStorageAdapter rocketmqAdapter = new RocketMQStorageAdapter();
-        rocketmqAdapter.initialize(rocketmqConfig);
-        storageAdapterManager.registerAdapter("rocketmq", rocketmqAdapter, true);
+        storageAdapter = new RocketMQStorageAdapter();
+        storageAdapter.initialize(rocketmqConfig);
 
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(storageAdapter);
 
         virtualRouteManager = new VirtualRouteManager();
         virtualRouteManager.start(NAMESRV_ADDR, "127.0.0.1", proxyPort);
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapterManager, "127.0.0.1", proxyPort);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapter, "127.0.0.1", proxyPort);
 
         NettyServerConfig serverConfig = new NettyServerConfig();
         serverConfig.setListenPort(proxyPort);
@@ -106,8 +103,8 @@ public class RocketMQIntegrationTest {
         if (virtualRouteManager != null) {
             virtualRouteManager.shutdown();
         }
-        if (storageAdapterManager != null) {
-            storageAdapterManager.shutdownAll();
+        if (storageAdapter != null) {
+            storageAdapter.shutdown();
         }
         if (namesrvClient != null) {
             namesrvClient.shutdown();

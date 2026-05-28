@@ -10,7 +10,6 @@ import com.mq.proxy.core.protocol.header.GetMaxOffsetRequestHeader;
 import com.mq.proxy.core.protocol.header.GetMinOffsetRequestHeader;
 import com.mq.proxy.core.protocol.header.SearchOffsetRequestHeader;
 import com.mq.proxy.core.server.RemotingProcessor;
-import com.mq.proxy.core.storage.StorageAdapter;
 import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,12 +109,6 @@ public class AdminBrokerProcessor implements RemotingProcessor {
     }
 
     private RemotingCommand forwardOffsetQuery(RemotingCommand request) throws Exception {
-        StorageAdapter adapter = messageEngine.getDefaultStorageAdapter();
-        if (adapter == null) {
-            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
-                    "no storage adapter available");
-        }
-
         String brokerName = resolveBrokerName(request);
         if (brokerName == null) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
@@ -131,7 +124,7 @@ public class AdminBrokerProcessor implements RemotingProcessor {
                 request.getCode(), brokerName, brokerAddr);
 
         try {
-            return adapter.forwardToBroker(request, brokerAddr);
+            return messageEngine.getStorageAdapter().forwardToBroker(request, brokerAddr);
         } catch (Exception e) {
             log.error("Offset query forward failed: code={}, error={}", request.getCode(), e.getMessage());
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());
@@ -152,14 +145,8 @@ public class AdminBrokerProcessor implements RemotingProcessor {
                     "cannot resolve brokerAddr for request code=" + request.getCode());
         }
 
-        StorageAdapter adapter = messageEngine.getDefaultStorageAdapter();
-        if (adapter == null) {
-            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
-                    "no storage adapter available");
-        }
-
         try {
-            return adapter.forwardToBroker(request, brokerAddr);
+            return messageEngine.getStorageAdapter().forwardToBroker(request, brokerAddr);
         } catch (Exception e) {
             log.error("Admin forward failed: code={}, error={}", request.getCode(), e.getMessage());
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());

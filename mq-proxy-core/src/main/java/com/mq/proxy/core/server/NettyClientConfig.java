@@ -9,13 +9,10 @@ public class NettyClientConfig {
     private int clientChannelMaxIdleTimeSeconds = 120;
     private int clientWorkerThreadNums = 4;
 
-    // TLS配置
     private boolean tlsEnabled = false;
-    private String tlsTrustStorePath;
-    private String tlsTrustStorePassword;
-    private String tlsKeyStorePath;
-    private String tlsKeyStorePassword;
-    private String tlsKeyStoreType = "JKS";
+    private String tlsTrustCertPath;
+    private String tlsClientCertPath;
+    private String tlsClientKeyPath;
 
     public String getNamesrvAddr() {
         return namesrvAddr;
@@ -81,43 +78,27 @@ public class NettyClientConfig {
         this.tlsEnabled = tlsEnabled;
     }
 
-    public String getTlsTrustStorePath() {
-        return tlsTrustStorePath;
+    public String getTlsTrustCertPath() {
+        return tlsTrustCertPath;
     }
 
-    public void setTlsTrustStorePath(String tlsTrustStorePath) {
-        this.tlsTrustStorePath = tlsTrustStorePath;
+    public void setTlsTrustCertPath(String tlsTrustCertPath) {
+        this.tlsTrustCertPath = tlsTrustCertPath;
     }
 
-    public String getTlsTrustStorePassword() {
-        return tlsTrustStorePassword;
+    public String getTlsClientCertPath() {
+        return tlsClientCertPath;
     }
 
-    public void setTlsTrustStorePassword(String tlsTrustStorePassword) {
-        this.tlsTrustStorePassword = tlsTrustStorePassword;
+    public void setTlsClientCertPath(String tlsClientCertPath) {
+        this.tlsClientCertPath = tlsClientCertPath;
     }
 
-    public String getTlsKeyStorePath() {
-        return tlsKeyStorePath;
+    public String getTlsClientKeyPath() {
+        return tlsClientKeyPath;
     }
 
-    public void setTlsKeyStorePath(String tlsKeyStorePath) {
-        this.tlsKeyStorePath = tlsKeyStorePath;
-    }
-
-    public String getTlsKeyStorePassword() {
-        return tlsKeyStorePassword;
-    }
-
-    public void setTlsKeyStorePassword(String tlsKeyStorePassword) {
-        this.tlsKeyStorePassword = tlsKeyStorePassword;
-    }
-
-    public String getTlsKeyStoreType() {
-        return tlsKeyStoreType;
-    }
-
-    public void setTlsKeyStoreType(String tlsKeyStoreType) {
-        this.tlsKeyStoreType = tlsKeyStoreType;
+    public void setTlsClientKeyPath(String tlsClientKeyPath) {
+        this.tlsClientKeyPath = tlsClientKeyPath;
     }
 }

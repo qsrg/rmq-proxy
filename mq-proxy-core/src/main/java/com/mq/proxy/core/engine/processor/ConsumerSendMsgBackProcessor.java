@@ -8,7 +8,6 @@ import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
 import com.mq.proxy.core.protocol.header.ConsumerSendMsgBackRequestHeader;
 import com.mq.proxy.core.server.RemotingProcessor;
-import com.mq.proxy.core.storage.StorageAdapter;
 import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,15 +33,6 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
     public RemotingCommand processRequest(Channel channel, RemotingCommand request) throws Exception {
         ConsumerSendMsgBackRequestHeader requestHeader = parseRequestHeader(request);
 
-        StorageAdapter adapter = messageEngine.getStorageAdapter(requestHeader.getOriginTopic());
-        if (adapter == null) {
-            adapter = messageEngine.getDefaultStorageAdapter();
-        }
-        if (adapter == null) {
-            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
-                    "no storage adapter available");
-        }
-
         String brokerName = resolveBrokerName(requestHeader, request);
         if (brokerName == null) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
@@ -62,7 +52,7 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
         forwardRequest.setBody(request.getBody());
 
         try {
-            RemotingCommand brokerResponse = adapter.forwardToBroker(forwardRequest, brokerAddr);
+            RemotingCommand brokerResponse = messageEngine.getStorageAdapter().forwardToBroker(forwardRequest, brokerAddr);
             return brokerResponse;
         } catch (Exception e) {
             log.error("ConsumerSendMsgBack forward failed: group={}, offset={}, error={}",

@@ -3,14 +3,11 @@ package com.mq.proxy.core.engine;
 import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.RemotingCommand;
-import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageAdapterManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -23,14 +20,14 @@ public class ProxyBrokerHeartbeatService {
     private static final String PROXY_CLIENT_ID_PREFIX = "MQProxy@";
 
     private final ClientConnectionManager clientConnectionManager;
-    private final StorageAdapterManager storageAdapterManager;
+    private final StorageAdapter storageAdapter;
     private final String proxyClientId;
     private ScheduledExecutorService scheduledExecutor;
 
     public ProxyBrokerHeartbeatService(ClientConnectionManager clientConnectionManager,
-                                       StorageAdapterManager storageAdapterManager, String proxyHost, int proxyPort) {
+                                       StorageAdapter storageAdapter, String proxyHost, int proxyPort) {
         this.clientConnectionManager = clientConnectionManager;
-        this.storageAdapterManager = storageAdapterManager;
+        this.storageAdapter = storageAdapter;
         this.proxyClientId = PROXY_CLIENT_ID_PREFIX + proxyHost + "@" + proxyPort + "@" + System.currentTimeMillis();
     }
 
@@ -57,11 +54,6 @@ public class ProxyBrokerHeartbeatService {
     }
 
     private void sendHeartbeatToAllBrokers() {
-        StorageAdapter defaultAdapter = storageAdapterManager.getAdapterByTopic(null);
-        if (defaultAdapter == null) {
-            return;
-        }
-
         HeartbeatData heartbeatData = buildHeartbeatData();
         if (heartbeatData == null) {
             return;
@@ -73,7 +65,7 @@ public class ProxyBrokerHeartbeatService {
         request.setBody(body);
 
         try {
-            RemotingCommand response = defaultAdapter.forwardToBroker(request);
+            RemotingCommand response = storageAdapter.forwardToBroker(request, null);
             if (response != null && response.getCode() == 0) {
                 log.debug("Proxy heartbeat to broker success, producerGroups={}, consumerGroups={}",
                         heartbeatData.getProducerDataSet().size(),

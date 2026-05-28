@@ -13,7 +13,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapterManager;
+import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter;
 import org.junit.After;
@@ -23,7 +23,6 @@ import org.junit.Test;
 import java.io.File;
 import java.net.ServerSocket;
 import java.util.HashMap;
-import java.util.Map;
 
 import static org.junit.Assert.*;
 
@@ -34,17 +33,15 @@ public class NativeTlsIntegrationTest {
     private static final String PRODUCER_GROUP = "PID_NATIVE_TLS_TEST";
     private static final String CONSUMER_GROUP = "CID_NATIVE_TLS_TEST";
 
-    private static final String KEYSTORE_PATH = "/tmp/proxy-tls-native-keystore.jks";
-    private static final String CERT_PATH = "/tmp/proxy-tls-native-cert.cer";
-    private static final String TRUSTSTORE_PATH = "/tmp/proxy-tls-native-truststore.jks";
-    private static final String STORE_PASS = "testpass";
+    private static final String CERT_PATH = "/tmp/proxy-tls-native-server.crt";
+    private static final String KEY_PATH = "/tmp/proxy-tls-native-server.key";
 
     private NettyRemotingClient namesrvClient;
     private String brokerAddr;
     private NettyRemotingServer proxyServer;
     private NettyRemotingClient tlsClient;
     private int proxyPort;
-    private StorageAdapterManager storageAdapterManager;
+    private StorageAdapter rocketmqAdapter;
     private MessageEngine messageEngine;
     private VirtualRouteManager virtualRouteManager;
     private ClientConnectionManager clientConnectionManager;
@@ -63,32 +60,28 @@ public class NativeTlsIntegrationTest {
 
         proxyPort = findAvailablePort();
 
-        storageAdapterManager = new StorageAdapterManager();
         StorageConfig rocketmqConfig = new StorageConfig();
-        rocketmqConfig.setAdapterType("rocketmq");
         rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
         rocketmqConfig.setBrokerAddr(brokerAddr);
         rocketmqConfig.setConnectTimeoutMillis(5000);
 
-        RocketMQStorageAdapter rocketmqAdapter = new RocketMQStorageAdapter();
+        rocketmqAdapter = new RocketMQStorageAdapter();
         rocketmqAdapter.initialize(rocketmqConfig);
-        storageAdapterManager.registerAdapter("rocketmq", rocketmqAdapter, true);
 
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(rocketmqAdapter);
 
         virtualRouteManager = new VirtualRouteManager();
         virtualRouteManager.start(NAMESRV_ADDR, "127.0.0.1", proxyPort);
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapterManager, "127.0.0.1", proxyPort);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort);
 
         NettyServerConfig serverConfig = new NettyServerConfig();
         serverConfig.setListenPort(proxyPort);
         serverConfig.setTlsEnabled(true);
-        serverConfig.setTlsKeyStorePath(KEYSTORE_PATH);
-        serverConfig.setTlsKeyStorePassword(STORE_PASS);
-        serverConfig.setTlsKeyStoreType("JKS");
+        serverConfig.setTlsCertPath(CERT_PATH);
+        serverConfig.setTlsKeyPath(KEY_PATH);
         proxyServer = new NettyRemotingServer(serverConfig);
         proxyServer.setClientConnectionManager(clientConnectionManager);
         ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager, clientConnectionManager);
@@ -98,9 +91,7 @@ public class NativeTlsIntegrationTest {
 
         NettyClientConfig tlsClientConfig = new NettyClientConfig();
         tlsClientConfig.setTlsEnabled(true);
-        tlsClientConfig.setTlsTrustStorePath(TRUSTSTORE_PATH);
-        tlsClientConfig.setTlsTrustStorePassword(STORE_PASS);
-        tlsClientConfig.setTlsKeyStoreType("JKS");
+        tlsClientConfig.setTlsTrustCertPath(CERT_PATH);
         tlsClient = new NettyRemotingClient(tlsClientConfig);
         tlsClient.start();
 
@@ -121,16 +112,15 @@ public class NativeTlsIntegrationTest {
         if (virtualRouteManager != null) {
             virtualRouteManager.shutdown();
         }
-        if (storageAdapterManager != null) {
-            storageAdapterManager.shutdownAll();
+        if (rocketmqAdapter != null) {
+            rocketmqAdapter.shutdown();
         }
         if (namesrvClient != null) {
             namesrvClient.shutdown();
         }
 
-        deleteFile(KEYSTORE_PATH);
         deleteFile(CERT_PATH);
-        deleteFile(TRUSTSTORE_PATH);
+        deleteFile(KEY_PATH);
     }
 
     @Test
@@ -168,7 +158,6 @@ public class NativeTlsIntegrationTest {
     public void testTlsProxyPullMessage() throws Exception {
         String proxyAddr = "127.0.0.1:" + proxyPort;
 
-        // First send a message through TLS proxy
         HashMap<String, String> sendExtFields = new HashMap<>();
         sendExtFields.put("a", PRODUCER_GROUP);
         sendExtFields.put("b", TOPIC);
@@ -195,7 +184,6 @@ public class NativeTlsIntegrationTest {
 
         Thread.sleep(500);
 
-        // Then pull the message through TLS proxy
         HashMap<String, String> pullExtFields = new HashMap<>();
         pullExtFields.put("consumerGroup", CONSUMER_GROUP);
         pullExtFields.put("topic", TOPIC);
@@ -222,51 +210,15 @@ public class NativeTlsIntegrationTest {
     }
 
     private void generateCertificates() throws Exception {
-        // Generate self-signed JKS keystore
         ProcessBuilder pb1 = new ProcessBuilder(
-                "keytool", "-genkeypair",
-                "-alias", "proxy",
-                "-keyalg", "RSA",
-                "-keysize", "2048",
-                "-validity", "1",
-                "-keystore", KEYSTORE_PATH,
-                "-storepass", STORE_PASS,
-                "-keypass", STORE_PASS,
-                "-dname", "CN=proxy-test,OU=test,O=test,L=test,ST=test,C=CN",
-                "-deststoretype", "JKS"
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", KEY_PATH, "-out", CERT_PATH, "-days", "1", "-nodes",
+                "-subj", "/CN=proxy-test/OU=test/O=test/L=test/ST=test/C=CN"
         );
         pb1.inheritIO();
         Process p1 = pb1.start();
         int exitCode1 = p1.waitFor();
-        assertEquals("keytool genkeypair should succeed", 0, exitCode1);
-
-        // Export certificate
-        ProcessBuilder pb2 = new ProcessBuilder(
-                "keytool", "-exportcert",
-                "-alias", "proxy",
-                "-keystore", KEYSTORE_PATH,
-                "-storepass", STORE_PASS,
-                "-file", CERT_PATH
-        );
-        pb2.inheritIO();
-        Process p2 = pb2.start();
-        int exitCode2 = p2.waitFor();
-        assertEquals("keytool exportcert should succeed", 0, exitCode2);
-
-        // Import certificate into truststore
-        ProcessBuilder pb3 = new ProcessBuilder(
-                "keytool", "-importcert",
-                "-alias", "proxy",
-                "-file", CERT_PATH,
-                "-keystore", TRUSTSTORE_PATH,
-                "-storepass", STORE_PASS,
-                "-noprompt"
-        );
-        pb3.inheritIO();
-        Process p3 = pb3.start();
-        int exitCode3 = p3.waitFor();
-        assertEquals("keytool importcert should succeed", 0, exitCode3);
-
+        assertEquals("openssl cert generation should succeed", 0, exitCode1);
         System.out.println("TLS certificates generated successfully");
     }
 

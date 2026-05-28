@@ -20,19 +20,16 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.ClientAuth;
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
-import javax.net.ssl.TrustManagerFactory;
 import java.io.FileInputStream;
 import java.io.InputStream;
-import java.security.KeyStore;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -74,30 +71,33 @@ public class NettyRemotingServer {
     }
 
     private SslContext buildSslContext() throws Exception {
-        KeyStore keyStore = KeyStore.getInstance(nettyServerConfig.getTlsKeyStoreType());
-        try (InputStream kis = new FileInputStream(nettyServerConfig.getTlsKeyStorePath())) {
-            keyStore.load(kis, nettyServerConfig.getTlsKeyStorePassword() != null
-                    ? nettyServerConfig.getTlsKeyStorePassword().toCharArray() : null);
-        }
+        InputStream certStream = null;
+        InputStream keyStream = null;
+        try {
+            certStream = new FileInputStream(nettyServerConfig.getTlsCertPath());
+            keyStream = new FileInputStream(nettyServerConfig.getTlsKeyPath());
 
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, nettyServerConfig.getTlsKeyStorePassword() != null
-                ? nettyServerConfig.getTlsKeyStorePassword().toCharArray() : null);
+            String keyPassword = System.getProperty("proxy.tlsKeyPassword");
+            SslContextBuilder builder = SslContextBuilder.forServer(
+                    certStream, keyStream, keyPassword);
 
-        SslContextBuilder builder = SslContextBuilder.forServer(kmf);
-
-        if (nettyServerConfig.isTlsClientAuth()) {
-            KeyStore trustStore = KeyStore.getInstance(nettyServerConfig.getTlsKeyStoreType());
-            try (InputStream tis = new FileInputStream(nettyServerConfig.getTlsTrustStorePath())) {
-                trustStore.load(tis, nettyServerConfig.getTlsTrustStorePassword() != null
-                        ? nettyServerConfig.getTlsTrustStorePassword().toCharArray() : null);
+            if (nettyServerConfig.isTlsClientAuth()) {
+                if (nettyServerConfig.getTlsTrustCertPath() != null) {
+                    InputStream trustCertStream = new FileInputStream(nettyServerConfig.getTlsTrustCertPath());
+                    builder.trustManager(trustCertStream);
+                }
+                builder.clientAuth(ClientAuth.REQUIRE);
             }
-            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init(trustStore);
-            builder.trustManager(tmf).clientAuth(ClientAuth.REQUIRE);
-        }
 
-        return builder.build();
+            return builder.build();
+        } finally {
+            if (certStream != null) {
+                certStream.close();
+            }
+            if (keyStream != null) {
+                keyStream.close();
+            }
+        }
     }
 
     public void setClientConnectionManager(ClientConnectionManager clientConnectionManager) {

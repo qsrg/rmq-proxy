@@ -1,30 +1,22 @@
 package com.mq.proxy.core.config;
 
-import java.util.HashMap;
-import java.util.Map;
-
 public class ProxyConfig {
     private int listenPort = 10911;
     private String proxyHost = "127.0.0.1";
     private String namesrvAddr = "127.0.0.1:9876";
-    private String storageAdapterType = "mock";
     private String brokerAddr;
     private int connectTimeoutMillis = 3000;
     private boolean registerProxyToNameServer = false;
     private String proxyBrokerName = "ProxyBroker";
     private String proxyClusterName = "ProxyCluster";
-    private Map<String, String> topicRouteConfig = new HashMap<>();
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
     private long routeCacheExpireMillis = 30000;
 
-    // TLS配置
     private boolean tlsEnabled = false;
-    private String tlsKeyStorePath;
-    private String tlsKeyStorePassword;
-    private String tlsTrustStorePath;
-    private String tlsTrustStorePassword;
-    private String tlsKeyStoreType = "JKS";
+    private String tlsCertPath;
+    private String tlsKeyPath;
+    private String tlsTrustCertPath;
     private boolean tlsClientAuth = false;
 
     public int getListenPort() {
@@ -49,14 +41,6 @@ public class ProxyConfig {
 
     public void setNamesrvAddr(String namesrvAddr) {
         this.namesrvAddr = namesrvAddr;
-    }
-
-    public String getStorageAdapterType() {
-        return storageAdapterType;
-    }
-
-    public void setStorageAdapterType(String storageAdapterType) {
-        this.storageAdapterType = storageAdapterType;
     }
 
     public String getBrokerAddr() {
@@ -99,14 +83,6 @@ public class ProxyConfig {
         this.proxyClusterName = proxyClusterName;
     }
 
-    public Map<String, String> getTopicRouteConfig() {
-        return topicRouteConfig;
-    }
-
-    public void setTopicRouteConfig(Map<String, String> topicRouteConfig) {
-        this.topicRouteConfig = topicRouteConfig;
-    }
-
     public int getBossThreadNums() {
         return bossThreadNums;
     }
@@ -139,44 +115,28 @@ public class ProxyConfig {
         this.tlsEnabled = tlsEnabled;
     }
 
-    public String getTlsKeyStorePath() {
-        return tlsKeyStorePath;
+    public String getTlsCertPath() {
+        return tlsCertPath;
     }
 
-    public void setTlsKeyStorePath(String tlsKeyStorePath) {
-        this.tlsKeyStorePath = tlsKeyStorePath;
+    public void setTlsCertPath(String tlsCertPath) {
+        this.tlsCertPath = tlsCertPath;
     }
 
-    public String getTlsKeyStorePassword() {
-        return tlsKeyStorePassword;
+    public String getTlsKeyPath() {
+        return tlsKeyPath;
     }
 
-    public void setTlsKeyStorePassword(String tlsKeyStorePassword) {
-        this.tlsKeyStorePassword = tlsKeyStorePassword;
+    public void setTlsKeyPath(String tlsKeyPath) {
+        this.tlsKeyPath = tlsKeyPath;
     }
 
-    public String getTlsTrustStorePath() {
-        return tlsTrustStorePath;
+    public String getTlsTrustCertPath() {
+        return tlsTrustCertPath;
     }
 
-    public void setTlsTrustStorePath(String tlsTrustStorePath) {
-        this.tlsTrustStorePath = tlsTrustStorePath;
-    }
-
-    public String getTlsTrustStorePassword() {
-        return tlsTrustStorePassword;
-    }
-
-    public void setTlsTrustStorePassword(String tlsTrustStorePassword) {
-        this.tlsTrustStorePassword = tlsTrustStorePassword;
-    }
-
-    public String getTlsKeyStoreType() {
-        return tlsKeyStoreType;
-    }
-
-    public void setTlsKeyStoreType(String tlsKeyStoreType) {
-        this.tlsKeyStoreType = tlsKeyStoreType;
+    public void setTlsTrustCertPath(String tlsTrustCertPath) {
+        this.tlsTrustCertPath = tlsTrustCertPath;
     }
 
     public boolean isTlsClientAuth() {

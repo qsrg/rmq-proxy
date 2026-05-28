@@ -13,22 +13,17 @@ import static org.junit.Assert.*;
 public class MockStorageAdapterTest {
 
     private MockStorageAdapter adapter;
+    private static final String BROKER_ADDR = "127.0.0.1:10911";
 
     @Before
     public void setUp() {
         adapter = new MockStorageAdapter();
         StorageConfig config = new StorageConfig();
-        config.setAdapterType("mock");
         try {
             adapter.initialize(config);
         } catch (Exception e) {
             fail("initialize failed: " + e.getMessage());
         }
-    }
-
-    @Test
-    public void testGetAdapterName() {
-        assertEquals("mock", adapter.getAdapterName());
     }
 
     @Test
@@ -45,7 +40,7 @@ public class MockStorageAdapterTest {
         message.setQueueId(0);
         message.setBody("hello".getBytes());
 
-        PutResult result = adapter.putMessage(message);
+        PutResult result = adapter.putMessage(message, BROKER_ADDR);
 
         assertTrue(result.isSuccess());
         assertNotNull(result.getMsgId());
@@ -61,9 +56,9 @@ public class MockStorageAdapterTest {
         message.setQueueId(1);
         message.setBody("hello".getBytes());
 
-        adapter.putMessage(message);
+        adapter.putMessage(message, BROKER_ADDR);
 
-        PullResult result = adapter.pullMessage("TestGroup", "TestTopic", 1, 0, 10, 3000, null, null);
+        PullResult result = adapter.pullMessage("TestGroup", "TestTopic", 1, 0, 10, 3000, null, null, BROKER_ADDR);
 
         assertEquals(0, result.getResponseCode());
         assertNotNull(result.getMessageList());
@@ -75,15 +70,15 @@ public class MockStorageAdapterTest {
 
     @Test
     public void testPullMessageNotFound() throws Exception {
-        PullResult result = adapter.pullMessage("TestGroup", "NonExistTopic", 0, 0, 10, 3000, null, null);
+        PullResult result = adapter.pullMessage("TestGroup", "NonExistTopic", 0, 0, 10, 3000, null, null, BROKER_ADDR);
         assertEquals(19, result.getResponseCode());
     }
 
     @Test
     public void testConsumerOffset() throws Exception {
-        adapter.updateConsumerOffset("TestGroup", "TestTopic", 0, 100L);
+        adapter.updateConsumerOffset("TestGroup", "TestTopic", 0, 100L, BROKER_ADDR);
 
-        OffsetResult result = adapter.queryConsumerOffset("TestGroup", "TestTopic", 0);
+        OffsetResult result = adapter.queryConsumerOffset("TestGroup", "TestTopic", 0, BROKER_ADDR);
 
         assertTrue(result.isSuccess());
         assertEquals(100L, result.getOffset());
@@ -91,7 +86,7 @@ public class MockStorageAdapterTest {
 
     @Test
     public void testQueryConsumerOffsetNotFound() throws Exception {
-        OffsetResult result = adapter.queryConsumerOffset("NonExistGroup", "NonExistTopic", 0);
+        OffsetResult result = adapter.queryConsumerOffset("NonExistGroup", "NonExistTopic", 0, BROKER_ADDR);
 
         assertFalse(result.isSuccess());
         assertEquals(22, result.getResponseCode());

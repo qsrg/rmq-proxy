@@ -1,6 +1,5 @@
 package com.mq.proxy.core.integration;
 
-import com.mq.proxy.core.config.ProxyConfig;
 import com.mq.proxy.core.engine.ClientConnectionManager;
 import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.engine.ProcessorRegister;
@@ -16,7 +15,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapterManager;
+import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import org.junit.After;
 import org.junit.Before;
@@ -32,7 +31,7 @@ import static org.junit.Assert.*;
 public class ProxyIntegrationTest {
 
     private int port;
-    private StorageAdapterManager storageAdapterManager;
+    private StorageAdapter mockStorageAdapter;
     private NettyRemotingServer remotingServer;
     private NettyRemotingClient client;
     private VirtualRouteManager virtualRouteManager;
@@ -45,23 +44,16 @@ public class ProxyIntegrationTest {
         port = ss.getLocalPort();
         ss.close();
 
-        ProxyConfig proxyConfig = new ProxyConfig();
-        proxyConfig.setListenPort(port);
-        proxyConfig.setStorageAdapterType("mock");
-
-        storageAdapterManager = new StorageAdapterManager();
-        TestMockStorageAdapter mockStorageAdapter = new TestMockStorageAdapter();
+        mockStorageAdapter = new TestMockStorageAdapter();
         StorageConfig storageConfig = new StorageConfig();
-        storageConfig.setAdapterType("mock");
         mockStorageAdapter.initialize(storageConfig);
-        storageAdapterManager.registerAdapter("mock", mockStorageAdapter, true);
 
-        MessageEngine messageEngine = new MessageEngine(storageAdapterManager);
+        MessageEngine messageEngine = new MessageEngine(mockStorageAdapter);
 
         virtualRouteManager = new VirtualRouteManager();
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapterManager, "127.0.0.1", port);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, mockStorageAdapter, "127.0.0.1", port);
 
         NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(port);
@@ -90,8 +82,8 @@ public class ProxyIntegrationTest {
         if (remotingServer != null) {
             remotingServer.shutdown();
         }
-        if (storageAdapterManager != null) {
-            storageAdapterManager.shutdownAll();
+        if (mockStorageAdapter != null) {
+            mockStorageAdapter.shutdown();
         }
         if (virtualRouteManager != null) {
             virtualRouteManager.shutdown();

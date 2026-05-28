@@ -5,9 +5,7 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
-import com.mq.proxy.core.protocol.header.PullMessageResponseHeader;
 import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageAdapterManager;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
 import org.junit.Before;
@@ -23,16 +21,13 @@ import static org.mockito.Mockito.*;
 public class PullMessageProcessorTest {
 
     private MessageEngine messageEngine;
-    private StorageAdapterManager storageAdapterManager;
     private StorageAdapter mockAdapter;
     private PullMessageProcessor processor;
 
     @Before
     public void setUp() {
-        storageAdapterManager = new StorageAdapterManager();
         mockAdapter = mock(StorageAdapter.class);
-        storageAdapterManager.registerAdapter("default", mockAdapter, true);
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(mockAdapter);
         processor = new PullMessageProcessor(messageEngine);
     }
 

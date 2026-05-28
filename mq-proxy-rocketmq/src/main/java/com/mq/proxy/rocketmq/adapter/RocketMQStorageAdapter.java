@@ -18,22 +18,23 @@ import com.mq.proxy.core.storage.model.OffsetResult;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
 
-import java.util.List;
-
 public class RocketMQStorageAdapter implements StorageAdapter {
 
     private NettyRemotingClient remotingClient;
-    private NettyClientConfig clientConfig;
     private StorageConfig storageConfig;
     private volatile boolean initialized = false;
+
+    private static final int FLAG_SUSPEND = 0x1 << 0;
+    private static final int FLAG_COMMIT_OFFSET = 0x1 << 1;
+    private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
 
     @Override
     public void initialize(StorageConfig config) throws Exception {
         this.storageConfig = config;
-        this.clientConfig = new NettyClientConfig();
-        this.clientConfig.setNamesrvAddr(config.getNamesrvAddr());
-        this.clientConfig.setConnectTimeoutMillis(config.getConnectTimeoutMillis());
-        this.remotingClient = new NettyRemotingClient(this.clientConfig);
+        NettyClientConfig clientConfig = new NettyClientConfig();
+        clientConfig.setNamesrvAddr(config.getNamesrvAddr());
+        clientConfig.setConnectTimeoutMillis(config.getConnectTimeoutMillis());
+        this.remotingClient = new NettyRemotingClient(clientConfig);
         this.remotingClient.start();
         this.initialized = true;
     }
@@ -44,16 +45,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             this.remotingClient.shutdown();
         }
         this.initialized = false;
-    }
-
-    @Override
-    public String getAdapterName() {
-        return "rocketmq";
-    }
-
-    @Override
-    public PutResult putMessage(InternalMessage message) throws Exception {
-        return putMessage(message, null);
     }
 
     @Override
@@ -92,15 +83,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             return PutResult.fail(response.getCode(), response.getRemark());
         }
     }
-
-    @Override
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType) throws Exception {
-        return pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, null);
-    }
-
-    private static final int FLAG_SUSPEND = 0x1 << 0;
-    private static final int FLAG_COMMIT_OFFSET = 0x1 << 1;
-    private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
 
     @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception {
@@ -157,11 +139,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     }
 
     @Override
-    public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId) throws Exception {
-        return queryConsumerOffset(consumerGroup, topic, queueId, null);
-    }
-
-    @Override
     public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception {
         QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
@@ -181,11 +158,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         } else {
             return OffsetResult.fail(response.getCode(), response.getRemark());
         }
-    }
-
-    @Override
-    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset) throws Exception {
-        updateConsumerOffset(consumerGroup, topic, queueId, commitOffset, null);
     }
 
     @Override
@@ -210,11 +182,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     @Override
     public boolean healthCheck() {
         return this.initialized;
-    }
-
-    @Override
-    public RemotingCommand forwardToBroker(RemotingCommand request) throws Exception {
-        return forwardToBroker(request, null);
     }
 
     @Override

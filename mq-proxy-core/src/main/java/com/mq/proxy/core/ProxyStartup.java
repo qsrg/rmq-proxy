@@ -9,13 +9,10 @@ import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
 import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapterManager;
+import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public class ProxyStartup {
 
@@ -37,30 +34,13 @@ public class ProxyStartup {
             proxyConfig = ProxyConfigLoader.loadDefault();
         }
 
-        log.info("Proxy starting with config: listenPort={}, proxyHost={}, namesrvAddr={}, storageAdapterType={}, registerProxyToNameServer={}",
+        log.info("Proxy starting with config: listenPort={}, proxyHost={}, namesrvAddr={}, brokerAddr={}, registerProxyToNameServer={}",
                 proxyConfig.getListenPort(), proxyConfig.getProxyHost(), proxyConfig.getNamesrvAddr(),
-                proxyConfig.getStorageAdapterType(), proxyConfig.isRegisterProxyToNameServer());
+                proxyConfig.getBrokerAddr(), proxyConfig.isRegisterProxyToNameServer());
 
-        StorageAdapterManager storageAdapterManager = new StorageAdapterManager();
-        try {
-            Map<String, StorageConfig> configs = new HashMap<>();
-            StorageConfig storageConfig = new StorageConfig();
-            storageConfig.setAdapterType(proxyConfig.getStorageAdapterType());
-            storageConfig.setNamesrvAddr(proxyConfig.getNamesrvAddr());
-            storageConfig.setBrokerAddr(proxyConfig.getBrokerAddr());
-            storageConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
-            configs.put(proxyConfig.getStorageAdapterType(), storageConfig);
-            storageAdapterManager.initializeAll(configs);
+        StorageAdapter storageAdapter = createStorageAdapter(proxyConfig);
 
-            for (Map.Entry<String, String> entry : proxyConfig.getTopicRouteConfig().entrySet()) {
-                storageAdapterManager.routeTopic(entry.getKey(), entry.getValue());
-            }
-        } catch (Exception e) {
-            log.error("Failed to initialize StorageAdapterManager", e);
-            System.exit(1);
-        }
-
-        MessageEngine messageEngine = new MessageEngine(storageAdapterManager);
+        MessageEngine messageEngine = new MessageEngine(storageAdapter);
 
         VirtualRouteManager virtualRouteManager = new VirtualRouteManager();
         virtualRouteManager.setProxyBrokerName(proxyConfig.getProxyBrokerName());
@@ -78,19 +58,22 @@ public class ProxyStartup {
         ClientConnectionManager clientConnectionManager = new ClientConnectionManager();
 
         ProxyBrokerHeartbeatService heartbeatService = new ProxyBrokerHeartbeatService(
-                clientConnectionManager, storageAdapterManager, proxyConfig.getProxyHost(), proxyConfig.getListenPort());
+                clientConnectionManager, storageAdapter, proxyConfig.getProxyHost(), proxyConfig.getListenPort());
 
         NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(proxyConfig.getListenPort());
         nettyServerConfig.setBossThreadNums(proxyConfig.getBossThreadNums());
         nettyServerConfig.setWorkerThreadNums(proxyConfig.getWorkerThreadNums());
-        nettyServerConfig.setTlsEnabled(proxyConfig.isTlsEnabled());
-        nettyServerConfig.setTlsKeyStorePath(proxyConfig.getTlsKeyStorePath());
-        nettyServerConfig.setTlsKeyStorePassword(proxyConfig.getTlsKeyStorePassword());
-        nettyServerConfig.setTlsTrustStorePath(proxyConfig.getTlsTrustStorePath());
-        nettyServerConfig.setTlsTrustStorePassword(proxyConfig.getTlsTrustStorePassword());
-        nettyServerConfig.setTlsKeyStoreType(proxyConfig.getTlsKeyStoreType());
-        nettyServerConfig.setTlsClientAuth(proxyConfig.isTlsClientAuth());
+
+        if (proxyConfig.isTlsEnabled()) {
+            nettyServerConfig.setTlsEnabled(true);
+            nettyServerConfig.setTlsCertPath(proxyConfig.getTlsCertPath());
+            nettyServerConfig.setTlsKeyPath(proxyConfig.getTlsKeyPath());
+            nettyServerConfig.setTlsTrustCertPath(proxyConfig.getTlsTrustCertPath());
+            nettyServerConfig.setTlsClientAuth(proxyConfig.isTlsClientAuth());
+            log.info("TLS enabled: certPath={}, keyPath={}, clientAuth={}",
+                    proxyConfig.getTlsCertPath(), proxyConfig.getTlsKeyPath(), proxyConfig.isTlsClientAuth());
+        }
 
         NettyRemotingServer remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);
@@ -101,6 +84,7 @@ public class ProxyStartup {
         heartbeatService.start();
 
         final ProxyBrokerHeartbeatService finalHeartbeatService = heartbeatService;
+        final StorageAdapter finalStorageAdapter = storageAdapter;
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
             @Override
             public void run() {
@@ -108,11 +92,36 @@ public class ProxyStartup {
                 finalHeartbeatService.shutdown();
                 remotingServer.shutdown();
                 virtualRouteManager.shutdown();
-                storageAdapterManager.shutdownAll();
+                finalStorageAdapter.shutdown();
                 log.info("Proxy shutdown complete");
             }
         }));
 
         log.info("Proxy started successfully on {}:{}", proxyConfig.getProxyHost(), proxyConfig.getListenPort());
+    }
+
+    private static StorageAdapter createStorageAdapter(ProxyConfig proxyConfig) {
+        String adapterClassName;
+        if (proxyConfig.getBrokerAddr() != null && !proxyConfig.getBrokerAddr().isEmpty()) {
+            adapterClassName = "com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter";
+        } else {
+            adapterClassName = "com.mq.proxy.mock.adapter.MockStorageAdapter";
+            log.info("No brokerAddr configured, using MockStorageAdapter");
+        }
+
+        try {
+            Class<?> clazz = Class.forName(adapterClassName);
+            StorageAdapter adapter = (StorageAdapter) clazz.newInstance();
+
+            StorageConfig storageConfig = new StorageConfig();
+            storageConfig.setNamesrvAddr(proxyConfig.getNamesrvAddr());
+            storageConfig.setBrokerAddr(proxyConfig.getBrokerAddr());
+            storageConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
+            adapter.initialize(storageConfig);
+
+            return adapter;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create StorageAdapter: " + adapterClassName, e);
+        }
     }
 }

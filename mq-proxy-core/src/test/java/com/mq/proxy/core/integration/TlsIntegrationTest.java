@@ -1,6 +1,5 @@
 package com.mq.proxy.core.integration;
 
-import com.mq.proxy.core.config.ProxyConfig;
 import com.mq.proxy.core.engine.ClientConnectionManager;
 import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.engine.ProcessorRegister;
@@ -16,7 +15,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapterManager;
+import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import org.junit.After;
 import org.junit.Before;
@@ -32,13 +31,12 @@ import static org.junit.Assert.*;
 
 public class TlsIntegrationTest {
 
-    private static final String KEYSTORE_PATH = "/tmp/proxy-test-keystore.jks";
-    private static final String TRUSTSTORE_PATH = "/tmp/proxy-test-truststore.jks";
-    private static final String CERT_PATH = "/tmp/proxy-test-cert.cer";
-    private static final String STORE_PASSWORD = "testpass";
+    private static final String CERT_PATH = "/tmp/proxy-test-server.crt";
+    private static final String KEY_PATH = "/tmp/proxy-test-server.key";
+    private static final String CA_CERT_PATH = "/tmp/proxy-test-ca.crt";
 
     private int port;
-    private StorageAdapterManager storageAdapterManager;
+    private StorageAdapter mockStorageAdapter;
     private NettyRemotingServer remotingServer;
     private NettyRemotingClient tlsClient;
     private VirtualRouteManager virtualRouteManager;
@@ -53,29 +51,22 @@ public class TlsIntegrationTest {
         port = ss.getLocalPort();
         ss.close();
 
-        ProxyConfig proxyConfig = new ProxyConfig();
-        proxyConfig.setListenPort(port);
-        proxyConfig.setStorageAdapterType("mock");
-
-        storageAdapterManager = new StorageAdapterManager();
-        TestMockStorageAdapter mockStorageAdapter = new TestMockStorageAdapter();
+        mockStorageAdapter = new TestMockStorageAdapter();
         StorageConfig storageConfig = new StorageConfig();
-        storageConfig.setAdapterType("mock");
         mockStorageAdapter.initialize(storageConfig);
-        storageAdapterManager.registerAdapter("mock", mockStorageAdapter, true);
 
-        MessageEngine messageEngine = new MessageEngine(storageAdapterManager);
+        MessageEngine messageEngine = new MessageEngine(mockStorageAdapter);
 
         virtualRouteManager = new VirtualRouteManager();
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapterManager, "127.0.0.1", port);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, mockStorageAdapter, "127.0.0.1", port);
 
         NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(port);
         nettyServerConfig.setTlsEnabled(true);
-        nettyServerConfig.setTlsKeyStorePath(KEYSTORE_PATH);
-        nettyServerConfig.setTlsKeyStorePassword(STORE_PASSWORD);
+        nettyServerConfig.setTlsCertPath(CERT_PATH);
+        nettyServerConfig.setTlsKeyPath(KEY_PATH);
 
         remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);
@@ -87,8 +78,7 @@ public class TlsIntegrationTest {
 
         NettyClientConfig clientConfig = new NettyClientConfig();
         clientConfig.setTlsEnabled(true);
-        clientConfig.setTlsTrustStorePath(TRUSTSTORE_PATH);
-        clientConfig.setTlsTrustStorePassword(STORE_PASSWORD);
+        clientConfig.setTlsTrustCertPath(CERT_PATH);
         tlsClient = new NettyRemotingClient(clientConfig);
         tlsClient.start();
     }
@@ -104,47 +94,27 @@ public class TlsIntegrationTest {
         if (remotingServer != null) {
             remotingServer.shutdown();
         }
-        if (storageAdapterManager != null) {
-            storageAdapterManager.shutdownAll();
+        if (mockStorageAdapter != null) {
+            mockStorageAdapter.shutdown();
         }
         if (virtualRouteManager != null) {
             virtualRouteManager.shutdown();
         }
-        deleteFile(KEYSTORE_PATH);
-        deleteFile(TRUSTSTORE_PATH);
         deleteFile(CERT_PATH);
+        deleteFile(KEY_PATH);
+        deleteFile(CA_CERT_PATH);
     }
 
     private void generateCertificates() throws Exception {
         ProcessBuilder pb1 = new ProcessBuilder(
-                "keytool", "-genkeypair", "-alias", "proxy", "-keyalg", "RSA", "-keysize", "2048",
-                "-validity", "1", "-keystore", KEYSTORE_PATH, "-storepass", STORE_PASSWORD,
-                "-keypass", STORE_PASSWORD,
-                "-dname", "CN=proxy-test,OU=test,O=test,L=test,ST=test,C=CN",
-                "-deststoretype", "JKS"
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", KEY_PATH, "-out", CERT_PATH, "-days", "1", "-nodes",
+                "-subj", "/CN=proxy-test/OU=test/O=test/L=test/ST=test/C=CN"
         );
         pb1.inheritIO();
         Process p1 = pb1.start();
         int code1 = p1.waitFor();
-        assertEquals("keytool genkeypair failed", 0, code1);
-
-        ProcessBuilder pb2 = new ProcessBuilder(
-                "keytool", "-exportcert", "-alias", "proxy", "-keystore", KEYSTORE_PATH,
-                "-storepass", STORE_PASSWORD, "-file", CERT_PATH
-        );
-        pb2.inheritIO();
-        Process p2 = pb2.start();
-        int code2 = p2.waitFor();
-        assertEquals("keytool exportcert failed", 0, code2);
-
-        ProcessBuilder pb3 = new ProcessBuilder(
-                "keytool", "-importcert", "-alias", "proxy", "-file", CERT_PATH,
-                "-keystore", TRUSTSTORE_PATH, "-storepass", STORE_PASSWORD, "-noprompt"
-        );
-        pb3.inheritIO();
-        Process p3 = pb3.start();
-        int code3 = p3.waitFor();
-        assertEquals("keytool importcert failed", 0, code3);
+        assertEquals("openssl cert generation failed", 0, code1);
     }
 
     private void deleteFile(String path) {

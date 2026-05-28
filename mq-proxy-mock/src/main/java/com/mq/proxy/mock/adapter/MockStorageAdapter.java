@@ -19,7 +19,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MockStorageAdapter implements StorageAdapter {
 
     private final AtomicInteger msgIdCounter = new AtomicInteger(0);
-    private final AtomicLong offsetCounter = new AtomicLong(0);
     private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, List<InternalMessage>>> topicQueueMessages = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap<Integer, Long>>> consumerOffsets = new ConcurrentHashMap<>();
     private volatile boolean initialized = false;
@@ -36,16 +35,6 @@ public class MockStorageAdapter implements StorageAdapter {
         topicQueueMessages.clear();
         consumerOffsets.clear();
         initialized = false;
-    }
-
-    @Override
-    public String getAdapterName() {
-        return "mock";
-    }
-
-    @Override
-    public PutResult putMessage(InternalMessage message) {
-        return putMessage(message, null);
     }
 
     @Override
@@ -84,11 +73,6 @@ public class MockStorageAdapter implements StorageAdapter {
     }
 
     @Override
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType) {
-        return pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, null);
-    }
-
-    @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) {
         ConcurrentHashMap<Integer, List<InternalMessage>> queueMap = topicQueueMessages.get(topic);
         if (queueMap == null) {
@@ -115,11 +99,6 @@ public class MockStorageAdapter implements StorageAdapter {
     }
 
     @Override
-    public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId) {
-        return queryConsumerOffset(consumerGroup, topic, queueId, null);
-    }
-
-    @Override
     public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) {
         ConcurrentHashMap<String, ConcurrentHashMap<Integer, Long>> topicMap = consumerOffsets.get(consumerGroup);
         if (topicMap != null) {
@@ -132,11 +111,6 @@ public class MockStorageAdapter implements StorageAdapter {
             }
         }
         return OffsetResult.fail(22, "offset not found");
-    }
-
-    @Override
-    public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset) {
-        updateConsumerOffset(consumerGroup, topic, queueId, commitOffset, null);
     }
 
     @Override
@@ -165,11 +139,6 @@ public class MockStorageAdapter implements StorageAdapter {
     @Override
     public boolean healthCheck() {
         return initialized;
-    }
-
-    @Override
-    public RemotingCommand forwardToBroker(RemotingCommand request) throws Exception {
-        return forwardToBroker(request, null);
     }
 
     @Override

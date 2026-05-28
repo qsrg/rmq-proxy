@@ -7,7 +7,6 @@ import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.header.ConsumerSendMsgBackRequestHeader;
 import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageAdapterManager;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -19,17 +18,14 @@ import static org.mockito.Mockito.*;
 public class ConsumerSendMsgBackProcessorTest {
 
     private MessageEngine messageEngine;
-    private StorageAdapterManager storageAdapterManager;
     private StorageAdapter mockAdapter;
     private ConsumerSendMsgBackProcessor processor;
     private VirtualRouteManager mockRouteManager;
 
     @Before
     public void setUp() {
-        storageAdapterManager = new StorageAdapterManager();
         mockAdapter = mock(StorageAdapter.class);
-        storageAdapterManager.registerAdapter("default", mockAdapter, true);
-        messageEngine = new MessageEngine(storageAdapterManager);
+        messageEngine = new MessageEngine(mockAdapter);
         processor = new ConsumerSendMsgBackProcessor(messageEngine);
         mockRouteManager = mock(VirtualRouteManager.class);
         processor.setVirtualRouteManager(mockRouteManager);
@@ -121,26 +117,6 @@ public class ConsumerSendMsgBackProcessorTest {
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-    }
-
-    @Test
-    public void testConsumerSendMsgBackNoAdapter() throws Exception {
-        StorageAdapterManager emptyManager = new StorageAdapterManager();
-        MessageEngine emptyEngine = new MessageEngine(emptyManager);
-        ConsumerSendMsgBackProcessor emptyProcessor = new ConsumerSendMsgBackProcessor(emptyEngine);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONSUMER_SEND_MSG_BACK, null);
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("offset", "100");
-        extFields.put("group", "testGroup");
-        extFields.put("delayLevel", "3");
-        request.setExtFields(extFields);
-
-        RemotingCommand response = emptyProcessor.processRequest(null, request);
-
-        assertNotNull(response);
-        assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
-        assertTrue(response.getRemark().contains("no storage adapter"));
     }
 
     @Test
