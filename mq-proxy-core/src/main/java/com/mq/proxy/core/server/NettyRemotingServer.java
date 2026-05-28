@@ -59,6 +59,7 @@ public class NettyRemotingServer {
 
     private ClientConnectionManager clientConnectionManager;
     private SslContext sslContext;
+    private ExecutorService defaultExecutor;
 
     public NettyRemotingServer(NettyServerConfig nettyServerConfig) {
         this.nettyServerConfig = nettyServerConfig;
@@ -107,6 +108,13 @@ public class NettyRemotingServer {
         this.bossGroup = new NioEventLoopGroup(this.nettyServerConfig.getBossThreadNums());
         this.workerGroup = new NioEventLoopGroup(this.nettyServerConfig.getWorkerThreadNums());
         this.callbackExecutor = Executors.newFixedThreadPool(this.nettyServerConfig.getCallbackExecutorThreadNums());
+        this.defaultExecutor = Executors.newFixedThreadPool(
+                Runtime.getRuntime().availableProcessors() * 2,
+                r -> {
+                    Thread t = new Thread(r, "ProxyRequestProcessor");
+                    t.setDaemon(true);
+                    return t;
+                });
         this.channelScanExecutor = Executors.newSingleThreadScheduledExecutor();
 
         this.serverBootstrap = new ServerBootstrap();
@@ -175,6 +183,9 @@ public class NettyRemotingServer {
         if (this.callbackExecutor != null) {
             this.callbackExecutor.shutdown();
         }
+        if (this.defaultExecutor != null) {
+            this.defaultExecutor.shutdown();
+        }
         for (ResponseFuture responseFuture : this.responseTable.values()) {
             responseFuture.putResponse(null);
         }
@@ -231,12 +242,27 @@ public class NettyRemotingServer {
                 if (processor == null) {
                     processor = defaultRemotingProcessor;
                 }
-                RemotingCommand response = processor.processRequest(ctx.channel(), msg);
-                if (!msg.isOnewayRPC() && response != null) {
-                    response.setOpaque(msg.getOpaque());
-                    response.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
-                    ctx.writeAndFlush(response);
-                }
+                final RemotingProcessor finalProcessor = processor;
+                defaultExecutor.submit(() -> {
+                    try {
+                        RemotingCommand response = finalProcessor.processRequest(ctx.channel(), msg);
+                        if (!msg.isOnewayRPC() && response != null) {
+                            response.setOpaque(msg.getOpaque());
+                            response.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
+                            ctx.writeAndFlush(response);
+                        }
+                    } catch (Exception e) {
+                        log.error("processRequest exception, code={}, remoteAddr={}",
+                                msg.getCode(), ctx.channel().remoteAddress(), e);
+                        if (!msg.isOnewayRPC()) {
+                            RemotingCommand errorResponse = RemotingCommand.createResponseCommand(
+                                    com.mq.proxy.core.protocol.RemotingSysResponseCode.SYSTEM_ERROR);
+                            errorResponse.setOpaque(msg.getOpaque());
+                            errorResponse.setRemark(e.getMessage());
+                            ctx.writeAndFlush(errorResponse);
+                        }
+                    }
+                });
             }
         }
 

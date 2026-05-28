@@ -98,6 +98,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         return pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, null);
     }
 
+    private static final int FLAG_SUSPEND = 0x1 << 0;
+    private static final int FLAG_COMMIT_OFFSET = 0x1 << 1;
     private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
 
     @Override
@@ -112,10 +114,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         String subExpr = subscription != null && !subscription.isEmpty() ? subscription : "*";
         String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
 
-        int sysFlag = FLAG_SUBSCRIPTION;
+        int sysFlag = 0;
         if (suspendTimeoutMillis > 0) {
-            sysFlag |= 0x1 << 1;
+            sysFlag |= FLAG_SUSPEND;
         }
+        sysFlag |= FLAG_SUBSCRIPTION;
         header.setSysFlag(sysFlag);
 
         header.setCommitOffset(0L);
