@@ -4,7 +4,6 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.header.GetRouteInfoRequestHeader;
-import com.mq.proxy.core.protocol.header.RegisterBrokerRequestHeader;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
@@ -20,9 +19,6 @@ public class VirtualRouteManager {
     private final NettyRemotingClient namesrvClient;
     private String namesrvAddr;
     private String proxyAddr;
-    private String proxyBrokerName = "ProxyBroker";
-    private long proxyBrokerId = 0L;
-    private String proxyClusterName = "ProxyCluster";
     private final ConcurrentHashMap<String, TopicRouteInfo> routeCache = new ConcurrentHashMap<>();
     private long routeCacheExpireMillis = 30000;
     private final ConcurrentHashMap<String, Long> routeCacheTimestamp = new ConcurrentHashMap<>();
@@ -75,44 +71,6 @@ public class VirtualRouteManager {
         return virtualRoute;
     }
 
-    public boolean registerProxyToNameServer() {
-        RegisterBrokerRequestHeader header = new RegisterBrokerRequestHeader();
-        header.setBrokerName(this.proxyBrokerName);
-        header.setBrokerAddr(this.proxyAddr);
-        header.setClusterName(this.proxyClusterName);
-        header.setHaServerAddr("");
-        header.setBrokerId(this.proxyBrokerId);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.REGISTER_BROKER, header);
-        request.makeCustomHeaderToNet();
-
-        TopicConfigSerializeWrapper wrapper = new TopicConfigSerializeWrapper();
-        request.setBody(wrapper.encode());
-
-        try {
-            RemotingCommand response = this.namesrvClient.invokeSync(this.namesrvAddr, request, 3000);
-            return response.getCode() == RemotingSysResponseCode.SUCCESS;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    public void unregisterProxyFromNameServer() {
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("brokerName", this.proxyBrokerName);
-        extFields.put("brokerAddr", this.proxyAddr);
-        extFields.put("clusterName", this.proxyClusterName);
-        extFields.put("brokerId", String.valueOf(this.proxyBrokerId));
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UNREGISTER_BROKER, null);
-        request.setExtFields(extFields);
-
-        try {
-            this.namesrvClient.invokeOneway(this.namesrvAddr, request, 3000);
-        } catch (Exception e) {
-        }
-    }
-
     public void refreshRouteCache() {
         this.routeCacheTimestamp.clear();
     }
@@ -161,18 +119,6 @@ public class VirtualRouteManager {
 
     public String getProxyAddr() {
         return this.proxyAddr;
-    }
-
-    public String getProxyBrokerAddr() {
-        return this.proxyAddr;
-    }
-
-    public void setProxyBrokerName(String proxyBrokerName) {
-        this.proxyBrokerName = proxyBrokerName;
-    }
-
-    public void setProxyClusterName(String proxyClusterName) {
-        this.proxyClusterName = proxyClusterName;
     }
 
     public void setRouteCacheExpireMillis(long routeCacheExpireMillis) {

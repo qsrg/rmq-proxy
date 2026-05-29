@@ -63,7 +63,6 @@ public class NativeClientIntegrationTest {
 
         StorageConfig rocketmqConfig = new StorageConfig();
         rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
-        rocketmqConfig.setBrokerAddr(brokerAddr);
         rocketmqConfig.setConnectTimeoutMillis(5000);
 
         rocketmqAdapter = new RocketMQStorageAdapter();

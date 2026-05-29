@@ -198,9 +198,9 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     }
 
     private String resolveBrokerAddr(String brokerAddr) {
-        if (brokerAddr != null && !brokerAddr.isEmpty()) {
-            return brokerAddr;
+        if (brokerAddr == null || brokerAddr.isEmpty()) {
+            throw new IllegalStateException("brokerAddr is required");
         }
-        return this.storageConfig.getBrokerAddr();
+        return brokerAddr;
     }
 }

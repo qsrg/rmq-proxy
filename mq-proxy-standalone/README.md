@@ -2,7 +2,7 @@
 
 MQ Proxy 是一个 RocketMQ 代理中间件，位于客户端和 Broker 之间，支持消息收发、消费、路由转发等功能。
 
-每个 Proxy 实例代理一套 RocketMQ Broker 集群（1:1 关系），不配置 `brokerAddr` 时自动使用 Mock 模式（内存存储，无需 Broker）。
+每个 Proxy 实例通过 NameServer 发现并代理 RocketMQ Broker 集群，`proxy.namesrvAddr` 为必填项。
 
 ## 快速开始
 
@@ -30,10 +30,7 @@ cd mq-proxy-1.0.0-SNAPSHOT
 ```properties
 proxy.listenPort=10913
 proxy.namesrvAddr=127.0.0.1:9876
-proxy.brokerAddr=127.0.0.1:10911
 ```
-
-> 不配置 `proxy.brokerAddr` 时，Proxy 自动以 Mock 模式运行，消息存储在内存中，无需启动 NameServer 和 Broker。
 
 ### 4. 启动
 
@@ -84,9 +81,8 @@ mq-proxy/
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `proxy.listenPort` | 10911 | Proxy 对外监听端口，客户端连接此端口 |
-| `proxy.host` | 127.0.0.1 | Proxy 自身 IP，用于向 NameServer 注册时告知客户端回连地址 |
-| `proxy.namesrvAddr` | 127.0.0.1:9876 | NameServer 地址，多个用分号分隔 |
-| `proxy.brokerAddr` | 空 | Broker 地址，Proxy 转发消息的目标；不配置时使用 Mock 模式 |
+| `proxy.host` | 127.0.0.1 | Proxy 自身 IP，用于路由信息中告知客户端回连地址 |
+| `proxy.namesrvAddr` | 127.0.0.1:9876 | NameServer 地址，多个用分号分隔，必填 |
 | `proxy.connectTimeoutMillis` | 3000 | Proxy 连接 Broker 的超时时间（毫秒） |
 
 ### 多 NameServer 配置
@@ -97,20 +93,11 @@ NameServer 地址支持分号分隔，与 RocketMQ 原生格式一致：
 proxy.namesrvAddr=10.0.0.1:9876;10.0.0.2:9876
 ```
 
-### 路由注册
+### 路由缓存
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `proxy.registerProxyToNameServer` | false | 是否将 Proxy 注册到 NameServer |
-| `proxy.proxyBrokerName` | ProxyBroker | Proxy 注册时使用的 Broker 名称 |
-| `proxy.proxyClusterName` | ProxyCluster | Proxy 注册时使用的集群名称 |
 | `proxy.routeCacheExpireMillis` | 30000 | 路由缓存过期时间（毫秒） |
-
-**`proxy.proxyBrokerName` 说明**：
-
-此值必须与真实 Broker 的 `brokerName` 一致。当 `registerProxyToNameServer=true` 时，
-Proxy 会把自己注册为该 Broker 的一个节点，客户端从 NameServer 获取路由时会拿到 Proxy 地址，
-从而自动通过 Proxy 通信，无需修改客户端代码。
 
 ### Netty 线程
 
@@ -249,26 +236,21 @@ Client --> Proxy(10913) --> Broker(10911) --> NameServer(9876)
 ```properties
 proxy.listenPort=10913
 proxy.namesrvAddr=127.0.0.1:9876
-proxy.brokerAddr=127.0.0.1:10911
 ```
 
-### 场景二：生产透明代理
+### 场景二：生产代理
 
 ```
-Client --> NameServer(9876) --> Proxy(10911) --> Broker(10911)
-                ↑ Proxy 注册自己为 Broker 节点
+Client --> Proxy(10911) --> Broker(10911) --> NameServer(9876)
 ```
 
 ```properties
 proxy.listenPort=10911
 proxy.host=10.0.0.5
 proxy.namesrvAddr=10.0.0.1:9876;10.0.0.2:9876
-proxy.brokerAddr=10.0.0.3:10911
-proxy.registerProxyToNameServer=true
-proxy.proxyBrokerName=broker-a
 ```
 
-客户端无需修改 `namesrvAddr`，Proxy 透明代理所有请求。
+客户端将 `namesrvAddr` 指向 Proxy 地址，Proxy 负责路由转换和请求转发。
 
 ### 场景三：TLS 加密 + 双向认证
 
@@ -283,18 +265,6 @@ proxy.tlsKeyPath=/etc/mq-proxy/server.key
 proxy.tlsTrustCertPath=/etc/mq-proxy/ca.crt
 proxy.tlsClientAuth=true
 ```
-
-### 场景四：Mock 模式（无 Broker）
-
-```
-Client --> Proxy(10913) --> 内存存储
-```
-
-不配置 `proxy.brokerAddr` 即可，Proxy 自动使用 Mock 模式。
-
-消息存储在内存中，适合功能验证和压测，无需启动 NameServer 和 Broker。
-
----
 
 ## 环境变量
 

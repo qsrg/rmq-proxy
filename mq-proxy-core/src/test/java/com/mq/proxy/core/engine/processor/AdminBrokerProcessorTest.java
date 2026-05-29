@@ -9,6 +9,7 @@ import com.mq.proxy.core.storage.StorageAdapter;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.HashMap;
 
 import static org.junit.Assert.*;
@@ -313,6 +314,63 @@ public class AdminBrokerProcessorTest {
                     RemotingSysResponseCode.SUCCESS, response.getCode());
             verify(mockAdapter).forwardToBroker(any(RemotingCommand.class), any());
         }
+    }
+
+    @Test
+    public void testGetAllDelayOffsetWithoutTopic() throws Exception {
+        when(mockRouteManager.getAllRealBrokerAddrs()).thenReturn(Arrays.asList("192.168.1.1:10911", "192.168.1.2:10911"));
+        RemotingCommand brokerResponse = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+        brokerResponse.setBody("{\"offsetTable\":{1:0,2:0,3:0}}".getBytes());
+        when(mockAdapter.forwardToBroker(any(RemotingCommand.class), eq("192.168.1.1:10911")))
+                .thenReturn(brokerResponse);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ALL_DELAY_OFFSET, null);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        assertNotNull(response.getBody());
+        verify(mockAdapter).forwardToBroker(any(RemotingCommand.class), eq("192.168.1.1:10911"));
+    }
+
+    @Test
+    public void testAdminRequestsWithoutTopicFallbackToFirstBroker() throws Exception {
+        when(mockRouteManager.getAllRealBrokerAddrs()).thenReturn(Arrays.asList("192.168.1.1:10911"));
+        RemotingCommand brokerResponse = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+        brokerResponse.setBody("ok".getBytes());
+        when(mockAdapter.forwardToBroker(any(RemotingCommand.class), eq("192.168.1.1:10911")))
+                .thenReturn(brokerResponse);
+
+        int[] codesWithoutTopic = {
+                RequestCode.GET_ALL_CONSUMER_OFFSET,
+                RequestCode.GET_BROKER_CONFIG,
+                RequestCode.GET_BROKER_RUNTIME_INFO,
+                RequestCode.GET_ALL_TOPIC_CONFIG,
+                RequestCode.GET_ALL_SUBSCRIPTIONGROUP_CONFIG
+        };
+
+        for (int requestCode : codesWithoutTopic) {
+            reset(mockAdapter);
+            when(mockAdapter.forwardToBroker(any(RemotingCommand.class), eq("192.168.1.1:10911")))
+                    .thenReturn(brokerResponse);
+
+            RemotingCommand request = RemotingCommand.createRequestCommand(requestCode, null);
+            RemotingCommand response = processor.processRequest(null, request);
+            assertEquals("Expected SUCCESS for requestCode=" + requestCode,
+                    RemotingSysResponseCode.SUCCESS, response.getCode());
+            verify(mockAdapter).forwardToBroker(any(RemotingCommand.class), eq("192.168.1.1:10911"));
+        }
+    }
+
+    @Test
+    public void testNoBrokerAddrAvailable() throws Exception {
+        when(mockRouteManager.getAllRealBrokerAddrs()).thenReturn(null);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ALL_DELAY_OFFSET, null);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
     }
 
     @Test

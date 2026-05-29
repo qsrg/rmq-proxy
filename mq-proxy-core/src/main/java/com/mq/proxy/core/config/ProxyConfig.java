@@ -2,13 +2,9 @@ package com.mq.proxy.core.config;
 
 public class ProxyConfig {
     private int listenPort = 10911;
-    private String proxyHost = "127.0.0.1";
+    private String proxyHost;
     private String namesrvAddr = "127.0.0.1:9876";
-    private String brokerAddr;
     private int connectTimeoutMillis = 3000;
-    private boolean registerProxyToNameServer = false;
-    private String proxyBrokerName = "ProxyBroker";
-    private String proxyClusterName = "ProxyCluster";
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
     private long routeCacheExpireMillis = 30000;
@@ -43,44 +39,12 @@ public class ProxyConfig {
         this.namesrvAddr = namesrvAddr;
     }
 
-    public String getBrokerAddr() {
-        return brokerAddr;
-    }
-
-    public void setBrokerAddr(String brokerAddr) {
-        this.brokerAddr = brokerAddr;
-    }
-
     public int getConnectTimeoutMillis() {
         return connectTimeoutMillis;
     }
 
     public void setConnectTimeoutMillis(int connectTimeoutMillis) {
         this.connectTimeoutMillis = connectTimeoutMillis;
-    }
-
-    public boolean isRegisterProxyToNameServer() {
-        return registerProxyToNameServer;
-    }
-
-    public void setRegisterProxyToNameServer(boolean registerProxyToNameServer) {
-        this.registerProxyToNameServer = registerProxyToNameServer;
-    }
-
-    public String getProxyBrokerName() {
-        return proxyBrokerName;
-    }
-
-    public void setProxyBrokerName(String proxyBrokerName) {
-        this.proxyBrokerName = proxyBrokerName;
-    }
-
-    public String getProxyClusterName() {
-        return proxyClusterName;
-    }
-
-    public void setProxyClusterName(String proxyClusterName) {
-        this.proxyClusterName = proxyClusterName;
     }
 
     public int getBossThreadNums() {

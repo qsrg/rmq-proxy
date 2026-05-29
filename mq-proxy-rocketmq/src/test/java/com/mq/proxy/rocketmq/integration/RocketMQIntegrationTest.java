@@ -59,7 +59,6 @@ public class RocketMQIntegrationTest {
 
         StorageConfig rocketmqConfig = new StorageConfig();
         rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
-        rocketmqConfig.setBrokerAddr(brokerAddr);
         rocketmqConfig.setConnectTimeoutMillis(5000);
 
         storageAdapter = new RocketMQStorageAdapter();

@@ -7,7 +7,6 @@ import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
 import com.mq.proxy.core.protocol.header.GetRouteInfoRequestHeader;
-import com.mq.proxy.core.protocol.header.RegisterBrokerRequestHeader;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.RemotingProcessor;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
@@ -36,7 +35,7 @@ public class NameServerProcessor implements RemotingProcessor {
         if (requestCode == RequestCode.GET_ROUTEINFO_BY_TOPIC) {
             return getRouteInfoByTopic(request);
         } else if (requestCode == RequestCode.REGISTER_BROKER) {
-            return registerBroker(request);
+            return forwardToNameServer(request);
         } else if (requestCode == RequestCode.UNREGISTER_BROKER) {
             return forwardToNameServer(request);
         } else if (requestCode == RequestCode.GET_BROKER_CLUSTER_INFO) {
@@ -67,16 +66,6 @@ public class NameServerProcessor implements RemotingProcessor {
         }
     }
 
-    private RemotingCommand registerBroker(RemotingCommand request) {
-        RegisterBrokerRequestHeader requestHeader = parseRegisterBrokerRequestHeader(request);
-
-        if (isProxySelf(requestHeader)) {
-            virtualRouteManager.registerProxyToNameServer();
-        }
-
-        return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
-    }
-
     private RemotingCommand forwardToNameServer(RemotingCommand request) {
         NettyRemotingClient namesrvClient = virtualRouteManager.getNamesrvClient();
         String namesrvAddr = virtualRouteManager.getNamesrvAddr();
@@ -90,11 +79,6 @@ public class NameServerProcessor implements RemotingProcessor {
         return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, "namesrv not available");
     }
 
-    private boolean isProxySelf(RegisterBrokerRequestHeader header) {
-        String proxyBrokerAddr = virtualRouteManager.getProxyBrokerAddr();
-        return proxyBrokerAddr != null && proxyBrokerAddr.equals(header.getBrokerAddr());
-    }
-
     private GetRouteInfoRequestHeader parseGetRouteInfoRequestHeader(RemotingCommand request) {
         GetRouteInfoRequestHeader header = (GetRouteInfoRequestHeader) request.getCustomHeader();
         if (header != null) {
@@ -104,25 +88,6 @@ public class NameServerProcessor implements RemotingProcessor {
         HashMap<String, String> extFields = request.getExtFields();
         if (extFields != null) {
             header.setTopic(extFields.get("topic"));
-        }
-        return header;
-    }
-
-    private RegisterBrokerRequestHeader parseRegisterBrokerRequestHeader(RemotingCommand request) {
-        RegisterBrokerRequestHeader header = (RegisterBrokerRequestHeader) request.getCustomHeader();
-        if (header != null) {
-            return header;
-        }
-        header = new RegisterBrokerRequestHeader();
-        HashMap<String, String> extFields = request.getExtFields();
-        if (extFields != null) {
-            header.setBrokerName(extFields.get("brokerName"));
-            header.setBrokerAddr(extFields.get("brokerAddr"));
-            header.setClusterName(extFields.get("clusterName"));
-            header.setHaServerAddr(extFields.get("haServerAddr"));
-            if (extFields.get("brokerId") != null) {
-                header.setBrokerId(Long.parseLong(extFields.get("brokerId")));
-            }
         }
         return header;
     }

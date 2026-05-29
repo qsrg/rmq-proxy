@@ -14,9 +14,15 @@ import com.mq.proxy.core.storage.StorageConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
+
 public class ProxyStartup {
 
     private static final Logger log = LoggerFactory.getLogger(ProxyStartup.class);
+    private static final String ROCKETMQ_STORAGE_ADAPTER = "com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter";
 
     public static void main(String[] args) {
         String configFilePath = null;
@@ -34,24 +40,22 @@ public class ProxyStartup {
             proxyConfig = ProxyConfigLoader.loadDefault();
         }
 
-        log.info("Proxy starting with config: listenPort={}, proxyHost={}, namesrvAddr={}, brokerAddr={}, registerProxyToNameServer={}",
-                proxyConfig.getListenPort(), proxyConfig.getProxyHost(), proxyConfig.getNamesrvAddr(),
-                proxyConfig.getBrokerAddr(), proxyConfig.isRegisterProxyToNameServer());
+        log.info("Proxy starting with config: listenPort={}, proxyHost={}, namesrvAddr={}",
+                proxyConfig.getListenPort(), proxyConfig.getProxyHost(), proxyConfig.getNamesrvAddr());
+
+        if (proxyConfig.getProxyHost() == null || proxyConfig.getProxyHost().trim().isEmpty()) {
+            String detectedHost = detectLocalHost();
+            proxyConfig.setProxyHost(detectedHost);
+            log.info("proxy.host not configured, auto-detected: {}", detectedHost);
+        }
 
         StorageAdapter storageAdapter = createStorageAdapter(proxyConfig);
 
         MessageEngine messageEngine = new MessageEngine(storageAdapter);
 
         VirtualRouteManager virtualRouteManager = new VirtualRouteManager();
-        virtualRouteManager.setProxyBrokerName(proxyConfig.getProxyBrokerName());
-        virtualRouteManager.setProxyClusterName(proxyConfig.getProxyClusterName());
         virtualRouteManager.setRouteCacheExpireMillis(proxyConfig.getRouteCacheExpireMillis());
         virtualRouteManager.start(proxyConfig.getNamesrvAddr(), proxyConfig.getProxyHost(), proxyConfig.getListenPort());
-
-        if (proxyConfig.isRegisterProxyToNameServer()) {
-            boolean registered = virtualRouteManager.registerProxyToNameServer();
-            log.info("Register proxy to NameServer result: {}", registered);
-        }
 
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
@@ -101,27 +105,49 @@ public class ProxyStartup {
     }
 
     private static StorageAdapter createStorageAdapter(ProxyConfig proxyConfig) {
-        String adapterClassName;
-        if (proxyConfig.getBrokerAddr() != null && !proxyConfig.getBrokerAddr().isEmpty()) {
-            adapterClassName = "com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter";
-        } else {
-            adapterClassName = "com.mq.proxy.mock.adapter.MockStorageAdapter";
-            log.info("No brokerAddr configured, using MockStorageAdapter");
+        if (proxyConfig.getNamesrvAddr() == null || proxyConfig.getNamesrvAddr().trim().isEmpty()) {
+            throw new IllegalArgumentException("proxy.namesrvAddr must not be blank");
         }
 
         try {
-            Class<?> clazz = Class.forName(adapterClassName);
+            Class<?> clazz = Class.forName(ROCKETMQ_STORAGE_ADAPTER);
             StorageAdapter adapter = (StorageAdapter) clazz.newInstance();
 
             StorageConfig storageConfig = new StorageConfig();
             storageConfig.setNamesrvAddr(proxyConfig.getNamesrvAddr());
-            storageConfig.setBrokerAddr(proxyConfig.getBrokerAddr());
             storageConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
             adapter.initialize(storageConfig);
 
             return adapter;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to create StorageAdapter: " + adapterClassName, e);
+            throw new RuntimeException("Failed to create StorageAdapter: " + ROCKETMQ_STORAGE_ADAPTER, e);
         }
+    }
+
+    private static String detectLocalHost() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            if (interfaces != null) {
+                while (interfaces.hasMoreElements()) {
+                    NetworkInterface ni = interfaces.nextElement();
+                    if (ni.isLoopback() || ni.isVirtual() || !ni.isUp()) {
+                        continue;
+                    }
+                    Enumeration<InetAddress> addresses = ni.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        InetAddress addr = addresses.nextElement();
+                        if (addr instanceof Inet6Address) {
+                            continue;
+                        }
+                        if (!addr.isLoopbackAddress()) {
+                            return addr.getHostAddress();
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to detect local host, fallback to 127.0.0.1: {}", e.getMessage());
+        }
+        return "127.0.0.1";
     }
 }

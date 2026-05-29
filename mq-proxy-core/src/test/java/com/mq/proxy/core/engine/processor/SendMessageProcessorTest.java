@@ -95,4 +95,189 @@ public class SendMessageProcessorTest {
 
         verify(mockAdapter).putMessage(any(InternalMessage.class), any());
     }
+
+    @Test
+    public void testProcessSendMessageBrokerReject() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any()))
+                .thenReturn(PutResult.fail(14, "TOPIC_NOT_EXIST"));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "testProducerGroup");
+        extFields.put("topic", "NotExistTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "0");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        request.setExtFields(extFields);
+        request.setBody("test".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(14, response.getCode());
+        assertEquals("TOPIC_NOT_EXIST", response.getRemark());
+    }
+
+    @Test
+    public void testProcessSendMessageBrokerUnavailable() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any()))
+                .thenThrow(new RuntimeException("Connection refused"));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "testProducerGroup");
+        extFields.put("topic", "TestTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "0");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        request.setExtFields(extFields);
+        request.setBody("test".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
+    }
+
+    @Test
+    public void testProcessSendMessageWithReconsumeTimes() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("retry-msg-1", 0, 50L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "testProducerGroup");
+        extFields.put("topic", "%RETRY%testConsumerGroup");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "0");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        extFields.put("reconsumeTimes", "3");
+        extFields.put("maxReconsumeTimes", "16");
+        extFields.put("unitMode", "false");
+        extFields.put("batch", "false");
+        request.setExtFields(extFields);
+        request.setBody("retry message".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+
+        verify(mockAdapter).putMessage(argThat(msg ->
+                msg.getReconsumeTimes() == 3 && msg.getMaxReconsumeTimes() == 16
+        ), any());
+    }
+
+    @Test
+    public void testProcessSendBatchMessage() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("batch-msg-1", 0, 300L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_BATCH_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("a", "testProducerGroup");
+        extFields.put("b", "BatchTopic");
+        extFields.put("c", "defaultTopic");
+        extFields.put("d", "4");
+        extFields.put("e", "0");
+        extFields.put("f", "0");
+        extFields.put("g", String.valueOf(System.currentTimeMillis()));
+        extFields.put("h", "0");
+        extFields.put("i", null);
+        extFields.put("j", "0");
+        extFields.put("k", "false");
+        extFields.put("l", "0");
+        extFields.put("m", "false");
+        request.setExtFields(extFields);
+        request.setBody("batch body".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+
+        verify(mockAdapter).putMessage(argThat(msg -> msg.isBatch()), any());
+    }
+
+    @Test
+    public void testProcessSendMessageWithDelayLevel() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("delay-msg-1", 0, 150L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "testProducerGroup");
+        extFields.put("topic", "OrderTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "0");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        extFields.put("properties", "DELAY\u00013\u0002");
+        extFields.put("reconsumeTimes", "0");
+        extFields.put("unitMode", "false");
+        extFields.put("batch", "false");
+        request.setExtFields(extFields);
+        request.setBody("delayed message".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+
+        verify(mockAdapter).putMessage(argThat(msg ->
+                msg.getProperties() != null && msg.getProperties().contains("DELAY")
+        ), any());
+    }
+
+    @Test
+    public void testProcessSendMessageV2WithDelayLevel() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("delay-v2-msg", 0, 250L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("a", "testProducerGroup");
+        extFields.put("b", "DelayTopic");
+        extFields.put("c", "defaultTopic");
+        extFields.put("d", "4");
+        extFields.put("e", "0");
+        extFields.put("f", "0");
+        extFields.put("g", String.valueOf(System.currentTimeMillis()));
+        extFields.put("h", "0");
+        extFields.put("i", "DELAY\u00015\u0002");
+        extFields.put("j", "0");
+        extFields.put("k", "false");
+        extFields.put("l", "0");
+        extFields.put("m", "false");
+        request.setExtFields(extFields);
+        request.setBody("delayed v2 message".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+
+        verify(mockAdapter).putMessage(argThat(msg ->
+                msg.getProperties() != null && msg.getProperties().contains("DELAY")
+        ), any());
+    }
+
+    @Test
+    public void testProcessUnsupportedRequestCode() throws Exception {
+        RemotingCommand request = RemotingCommand.createRequestCommand(999, null);
+        request.setExtFields(new HashMap<>());
+        request.setBody("test".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, response.getCode());
+    }
 }

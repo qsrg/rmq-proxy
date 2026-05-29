@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.List;
 
 public class AdminBrokerProcessor implements RemotingProcessor {
 
@@ -109,19 +110,13 @@ public class AdminBrokerProcessor implements RemotingProcessor {
     }
 
     private RemotingCommand forwardOffsetQuery(RemotingCommand request) throws Exception {
-        String brokerName = resolveBrokerName(request);
-        if (brokerName == null) {
-            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
-                    "cannot resolve brokerName for request code=" + request.getCode());
-        }
-        String brokerAddr = resolveBrokerAddr(brokerName);
+        String brokerAddr = resolveBrokerAddrFromRequest(request);
         if (brokerAddr == null) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
-                    "cannot resolve brokerAddr for brokerName=" + brokerName);
+                    "cannot resolve brokerAddr for request code=" + request.getCode());
         }
 
-        log.debug("Forwarding offset query: code={}, brokerName={}, brokerAddr={}",
-                request.getCode(), brokerName, brokerAddr);
+        log.debug("Forwarding offset query: code={}, brokerAddr={}", request.getCode(), brokerAddr);
 
         try {
             return messageEngine.getStorageAdapter().forwardToBroker(request, brokerAddr);
@@ -132,14 +127,7 @@ public class AdminBrokerProcessor implements RemotingProcessor {
     }
 
     private RemotingCommand forwardToBroker(RemotingCommand request) throws Exception {
-        String brokerAddr = null;
-        if (virtualRouteManager != null) {
-            String brokerName = resolveBrokerName(request);
-            if (brokerName != null) {
-                brokerAddr = virtualRouteManager.getRealBrokerAddr(brokerName);
-            }
-        }
-
+        String brokerAddr = resolveBrokerAddrFromRequest(request);
         if (brokerAddr == null) {
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
                     "cannot resolve brokerAddr for request code=" + request.getCode());
@@ -151,6 +139,27 @@ public class AdminBrokerProcessor implements RemotingProcessor {
             log.error("Admin forward failed: code={}, error={}", request.getCode(), e.getMessage());
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());
         }
+    }
+
+    private String resolveBrokerAddrFromRequest(RemotingCommand request) {
+        if (virtualRouteManager == null) {
+            return null;
+        }
+
+        String brokerName = resolveBrokerName(request);
+        if (brokerName != null) {
+            String realAddr = virtualRouteManager.getRealBrokerAddr(brokerName);
+            if (realAddr != null) {
+                return realAddr;
+            }
+        }
+
+        List<String> allAddrs = virtualRouteManager.getAllRealBrokerAddrs();
+        if (allAddrs != null && !allAddrs.isEmpty()) {
+            return allAddrs.get(0);
+        }
+
+        return null;
     }
 
     private String resolveBrokerName(RemotingCommand request) {
@@ -171,16 +180,6 @@ public class AdminBrokerProcessor implements RemotingProcessor {
                     }
                 }
                 return virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
-            }
-        }
-        return null;
-    }
-
-    private String resolveBrokerAddr(String brokerName) {
-        if (brokerName != null && virtualRouteManager != null) {
-            String realAddr = virtualRouteManager.getRealBrokerAddr(brokerName);
-            if (realAddr != null) {
-                return realAddr;
             }
         }
         return null;

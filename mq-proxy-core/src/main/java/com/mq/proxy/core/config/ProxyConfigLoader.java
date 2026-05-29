@@ -29,20 +29,8 @@ public class ProxyConfigLoader {
         if (props.containsKey("proxy.namesrvAddr")) {
             config.setNamesrvAddr(props.getProperty("proxy.namesrvAddr"));
         }
-        if (props.containsKey("proxy.brokerAddr")) {
-            config.setBrokerAddr(props.getProperty("proxy.brokerAddr"));
-        }
         if (props.containsKey("proxy.connectTimeoutMillis")) {
             config.setConnectTimeoutMillis(Integer.parseInt(props.getProperty("proxy.connectTimeoutMillis")));
-        }
-        if (props.containsKey("proxy.registerProxyToNameServer")) {
-            config.setRegisterProxyToNameServer(Boolean.parseBoolean(props.getProperty("proxy.registerProxyToNameServer")));
-        }
-        if (props.containsKey("proxy.proxyBrokerName")) {
-            config.setProxyBrokerName(props.getProperty("proxy.proxyBrokerName"));
-        }
-        if (props.containsKey("proxy.proxyClusterName")) {
-            config.setProxyClusterName(props.getProperty("proxy.proxyClusterName"));
         }
         if (props.containsKey("proxy.bossThreadNums")) {
             config.setBossThreadNums(Integer.parseInt(props.getProperty("proxy.bossThreadNums")));

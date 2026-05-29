@@ -13,7 +13,6 @@ public class RocketMQStorageAdapterTest {
         RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
         StorageConfig config = new StorageConfig();
         config.setNamesrvAddr("localhost:9876");
-        config.setBrokerAddr("localhost:10911");
 
         adapter.initialize(config);
         assertTrue(adapter.healthCheck());
