@@ -12,10 +12,6 @@ public class RemotingCommandEncoder extends MessageToByteEncoder<RemotingCommand
     protected void encode(ChannelHandlerContext ctx, RemotingCommand cmd, ByteBuf out) throws Exception {
         byte[] headerData = cmd.headerEncode();
 
-        if (System.getProperty("debug.encode") != null) {
-            System.out.println("[DEBUG-ENCODE] serializeType=" + cmd.getSerializeTypeCurrentRPC() + ", headerJson=" + new String(headerData, "UTF-8"));
-        }
-
         int headerLength = (cmd.getSerializeTypeCurrentRPC().getCode() << 24) | (headerData.length & 0x00FFFFFF);
 
         byte[] bodyData = cmd.getBody();

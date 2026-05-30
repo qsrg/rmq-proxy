@@ -71,7 +71,10 @@ public class TlsIntegrationTest {
         remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);
         messageEngine.setRemotingServer(remotingServer);
-        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager, clientConnectionManager);
+        heartbeatService.setRemotingServer(remotingServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
 
         remotingServer.start();
         heartbeatService.start();

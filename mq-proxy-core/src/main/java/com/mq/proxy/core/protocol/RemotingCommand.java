@@ -15,8 +15,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RemotingCommand {
     public static final int RPC_TYPE = 0;
     public static final int RPC_ONEWAY = 1;
+    public static final String REMOTING_VERSION_KEY = "rocketmq.remoting.version";
+    /**
+     * RocketMQ broker requires GET_CONSUMER_RUNNING_INFO callers to be at least
+     * V3_1_8_SNAPSHOT. Default to the local 4.9.8 protocol version when the
+     * environment does not override it explicitly.
+     */
+    static final int DEFAULT_REMOTING_VERSION = 625;
 
     private static final AtomicInteger requestId = new AtomicInteger(0);
+    private static volatile int configVersion = -1;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -43,6 +51,7 @@ public class RemotingCommand {
         cmd.setCode(code);
         cmd.customHeader = customHeader;
         cmd.setOpaque(getAndSet());
+        setCmdVersion(cmd);
         return cmd;
     }
 
@@ -51,6 +60,7 @@ public class RemotingCommand {
         cmd.markResponseType();
         cmd.setCode(code);
         cmd.setRemark(remark);
+        setCmdVersion(cmd);
         return cmd;
     }
 
@@ -60,6 +70,28 @@ public class RemotingCommand {
 
     public static int getAndSet() {
         return requestId.getAndIncrement();
+    }
+
+    static void resetConfigVersionForTest() {
+        configVersion = -1;
+    }
+
+    private static void setCmdVersion(RemotingCommand cmd) {
+        if (configVersion >= 0) {
+            cmd.setVersion(configVersion);
+            return;
+        }
+
+        String configured = System.getProperty(REMOTING_VERSION_KEY);
+        if (configured != null) {
+            int version = Integer.parseInt(configured);
+            cmd.setVersion(version);
+            configVersion = version;
+            return;
+        }
+
+        cmd.setVersion(DEFAULT_REMOTING_VERSION);
+        configVersion = DEFAULT_REMOTING_VERSION;
     }
 
     public void markResponseType() {

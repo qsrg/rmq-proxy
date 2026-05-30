@@ -16,6 +16,13 @@ public class ProcessorRegister {
 
     public static void registerProcessors(NettyRemotingServer remotingServer, MessageEngine messageEngine,
                                           VirtualRouteManager virtualRouteManager, ClientConnectionManager clientConnectionManager) {
+        registerProcessors(remotingServer, messageEngine, virtualRouteManager, clientConnectionManager, null);
+    }
+
+    public static void registerProcessors(NettyRemotingServer remotingServer, MessageEngine messageEngine,
+                                          VirtualRouteManager virtualRouteManager,
+                                          ClientConnectionManager clientConnectionManager,
+                                          UpstreamConsumerSessionManager upstreamConsumerSessionManager) {
         SendMessageProcessor sendMessageProcessor = new SendMessageProcessor(messageEngine);
         remotingServer.registerProcessor(RequestCode.SEND_MESSAGE, sendMessageProcessor);
         remotingServer.registerProcessor(RequestCode.SEND_MESSAGE_V2, sendMessageProcessor);
@@ -31,6 +38,8 @@ public class ProcessorRegister {
         remotingServer.registerProcessor(RequestCode.UPDATE_CONSUMER_OFFSET, consumerManageProcessor);
 
         ClientManageProcessor clientManageProcessor = new ClientManageProcessor(clientConnectionManager);
+        clientManageProcessor.setUpstreamConsumerSessionManager(upstreamConsumerSessionManager);
+        clientManageProcessor.setOnConsumerRegistered(() -> messageEngine.triggerHeartbeatForward());
         remotingServer.registerProcessor(RequestCode.HEART_BEAT, clientManageProcessor);
         remotingServer.registerProcessor(RequestCode.UNREGISTER_CLIENT, clientManageProcessor);
         remotingServer.registerProcessor(RequestCode.GET_CONSUMER_LIST_BY_GROUP, clientManageProcessor);
@@ -40,6 +49,7 @@ public class ProcessorRegister {
         remotingServer.registerProcessor(RequestCode.CONSUMER_SEND_MSG_BACK, consumerSendMsgBackProcessor);
 
         LockBatchMQProcessor lockBatchMQProcessor = new LockBatchMQProcessor(clientConnectionManager);
+        clientConnectionManager.addChannelInactiveListener(lockBatchMQProcessor::releaseLocksByChannel);
         remotingServer.registerProcessor(RequestCode.LOCK_BATCH_MQ, lockBatchMQProcessor);
         remotingServer.registerProcessor(RequestCode.UNLOCK_BATCH_MQ, lockBatchMQProcessor);
 

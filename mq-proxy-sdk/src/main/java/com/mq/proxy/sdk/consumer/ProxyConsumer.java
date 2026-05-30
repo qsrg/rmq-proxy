@@ -16,10 +16,18 @@ import io.netty.channel.ChannelHandlerContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.management.ManagementFactory;
+import java.net.InetAddress;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 /**
  * Proxy消费者 - 简化API，类似RocketMQ使用方式
@@ -27,14 +35,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <pre>
  * // 简单使用（类似RocketMQ）
  * ProxyConsumer consumer = new ProxyConsumer("ConsumerGroup");
- * consumer.setProxyAddrs("127.0.0.1:10911");
+ * consumer.setProxyAddrs("127.0.0.1:19876");
  * consumer.start();
  * PullResult result = consumer.pull("Topic", "ConsumerGroup", 0, 0L, 32);
  * consumer.shutdown();
  *
  * // 链式配置
  * ProxyConsumer consumer = new ProxyConsumer("ConsumerGroup")
- *     .setProxyAddrs("127.0.0.1:10911")
+ *     .setProxyAddrs("127.0.0.1:19876")
  *     .setSuspendTimeoutMillis(15000); // 长轮询
  * consumer.start();
  * </pre>
@@ -43,6 +51,7 @@ public class ProxyConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(ProxyConsumer.class);
 
+    private static final int FLAG_COMMIT_OFFSET = 0x01;
     private static final int FLAG_SUSPEND = 0x02;
     private static final int QUERY_NOT_FOUND = 206;
 
@@ -53,8 +62,16 @@ public class ProxyConsumer {
 
     private final LocalOffsetStore localOffsetStore = new LocalOffsetStore();
 
+    private final ConcurrentHashMap<String, String> subscriptions = new ConcurrentHashMap<>();
+
     private final CopyOnWriteArrayList<ConsumerChangeListener> consumerChangeListeners =
         new CopyOnWriteArrayList<>();
+
+    private String heartbeatClientId;
+
+    private ScheduledExecutorService heartbeatExecutor;
+
+    private static final int HEARTBEAT_INTERVAL_MILLIS = 1000 * 30;
 
     /**
      * 简化构造函数 - 推荐使用方式（类似RocketMQ）
@@ -119,6 +136,36 @@ public class ProxyConsumer {
         return this;
     }
 
+    public ProxyConsumer subscribe(String topic, String subExpression) {
+        subscriptions.put(topic, subExpression != null ? subExpression : "*");
+        return this;
+    }
+
+    public Map<String, String> getSubscriptions() {
+        return subscriptions;
+    }
+
+    public ProxyClientFacade getFacade() {
+        return facade;
+    }
+
+    public String getClientId() {
+        if (heartbeatClientId == null) {
+            heartbeatClientId = generateClientId();
+        }
+        return heartbeatClientId;
+    }
+
+    private String generateClientId() {
+        try {
+            String clientIP = InetAddress.getLocalHost().getHostAddress();
+            String pid = ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
+            return clientIP + "@" + pid + "#" + System.nanoTime();
+        } catch (Exception e) {
+            return "SDK@" + config.getConsumerGroup() + "@" + UUID.randomUUID();
+        }
+    }
+
     // ========== 启动和关闭 ==========
 
     public void start() {
@@ -129,14 +176,17 @@ public class ProxyConsumer {
             facade.start();
             registerNotifyProcessor();
             sendConsumerRegistration();
+            startHeartbeat();
             started = true;
-            log.info("ProxyConsumer started, group={}, proxyAddrs={}, messageModel={}",
-                config.getConsumerGroup(), config.getProxyAddrs(), config.getMessageModel());
+            log.info("ProxyConsumer started, group={}, proxyAddrs={}, messageModel={}, clientId={}",
+                config.getConsumerGroup(), config.getProxyAddrs(), config.getMessageModel(), getClientId());
         }
     }
 
     public void shutdown() {
         if (started) {
+            unregisterConsumer();
+            stopHeartbeat();
             if (facade != null) {
                 facade.shutdown();
             }
@@ -153,11 +203,16 @@ public class ProxyConsumer {
 
     public PullResult pull(String topic, String consumerGroup,
                           int queueId, long offset, int maxNums) throws ProxyException {
+        return pull(topic, consumerGroup, queueId, offset, maxNums, 0);
+    }
+
+    public PullResult pull(String topic, String consumerGroup,
+                          int queueId, long offset, int maxNums, long commitOffset) throws ProxyException {
 
         ensureStarted();
 
         try {
-            RemotingCommand request = buildPullMessageRequest(topic, consumerGroup, queueId, offset, maxNums);
+            RemotingCommand request = buildPullMessageRequest(topic, consumerGroup, queueId, offset, maxNums, commitOffset);
 
             long pullTimeout = config.getRequestTimeoutMillis();
             long suspendTimeout = config.getSuspendTimeoutMillis();
@@ -278,13 +333,25 @@ public class ProxyConsumer {
             return;
         }
         HeartbeatData heartbeatData = new HeartbeatData();
-        heartbeatData.setClientID("SDK@" + consumerGroup + "@" + System.currentTimeMillis());
+        heartbeatClientId = getClientId();
+        heartbeatData.setClientID(heartbeatClientId);
 
         HeartbeatData.ConsumerData consumerData = new HeartbeatData.ConsumerData();
         consumerData.setGroupName(consumerGroup);
         consumerData.setMessageModel(config.getMessageModel());
         consumerData.setConsumeType("CONSUME_ACTIVELY");
         consumerData.setConsumeFromWhere("CONSUME_FROM_LAST_OFFSET");
+
+        Set<HeartbeatData.SubscriptionData> subscriptionDataSet = new HashSet<>();
+        for (Map.Entry<String, String> entry : subscriptions.entrySet()) {
+            HeartbeatData.SubscriptionData subscriptionData = new HeartbeatData.SubscriptionData();
+            subscriptionData.setTopic(entry.getKey());
+            subscriptionData.setSubString(entry.getValue());
+            subscriptionData.setSubVersion(Long.MAX_VALUE);
+            subscriptionDataSet.add(subscriptionData);
+        }
+        consumerData.setSubscriptionDataSet(subscriptionDataSet);
+
         heartbeatData.getConsumerDataSet().add(consumerData);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
@@ -293,11 +360,67 @@ public class ProxyConsumer {
         try {
             RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
             if (response != null && response.getCode() == RemotingSysResponseCode.SUCCESS) {
-                log.info("SDK consumer registration sent, group={}, messageModel={}",
-                        consumerGroup, config.getMessageModel());
+                log.info("SDK consumer registration sent, group={}, messageModel={}, subscriptions={}",
+                        consumerGroup, config.getMessageModel(), subscriptions.keySet());
             }
         } catch (Exception e) {
             log.warn("SDK consumer registration failed (non-critical): {}", e.getMessage());
+        }
+    }
+
+    private void startHeartbeat() {
+        if (heartbeatExecutor == null || heartbeatExecutor.isShutdown()) {
+            heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "Heartbeat-" + config.getConsumerGroup());
+                t.setDaemon(true);
+                return t;
+            });
+        }
+        heartbeatExecutor.scheduleAtFixedRate(() -> {
+            try {
+                if (started) {
+                    sendConsumerRegistration();
+                }
+            } catch (Exception e) {
+                log.warn("Failed to send heartbeat: {}", e.getMessage());
+            }
+        }, HEARTBEAT_INTERVAL_MILLIS, HEARTBEAT_INTERVAL_MILLIS, TimeUnit.MILLISECONDS);
+        log.info("Heartbeat started for consumer group {}", config.getConsumerGroup());
+    }
+
+    private void stopHeartbeat() {
+        if (heartbeatExecutor != null) {
+            heartbeatExecutor.shutdown();
+            try {
+                if (!heartbeatExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    heartbeatExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                heartbeatExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void unregisterConsumer() {
+        String consumerGroup = config.getConsumerGroup();
+        if (consumerGroup == null || consumerGroup.isEmpty() || heartbeatClientId == null) {
+            return;
+        }
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UNREGISTER_CLIENT, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("clientID", heartbeatClientId);
+        extFields.put("consumerGroup", consumerGroup);
+        request.setExtFields(extFields);
+
+        try {
+            RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
+            if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
+                log.info("SDK consumer unregistered, group={}, clientId={}", consumerGroup, heartbeatClientId);
+            }
+        } catch (Exception e) {
+            log.warn("SDK consumer unregister failed (non-critical): {}", e.getMessage());
         }
     }
 
@@ -305,7 +428,7 @@ public class ProxyConsumer {
         facade.getRemotingClient().registerProcessor(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED,
             new SDKRequestProcessor() {
                 @Override
-                public void processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
+                public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) {
                     HashMap<String, String> extFields = request.getExtFields();
                     String group = extFields != null ? extFields.get("consumerGroup") : null;
                     if (group != null) {
@@ -314,14 +437,21 @@ public class ProxyConsumer {
                             listener.onConsumerIdsChanged(group);
                         }
                     }
+                    return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
                 }
             });
     }
 
     private RemotingCommand buildPullMessageRequest(String topic, String consumerGroup,
-                                                    int queueId, long offset, int maxNums) {
+                                                    int queueId, long offset, int maxNums, long commitOffset) {
         long suspendTimeout = config.getSuspendTimeoutMillis();
-        int sysFlag = suspendTimeout > 0 ? FLAG_SUSPEND : 0;
+        int sysFlag = 0;
+        if (commitOffset > 0) {
+            sysFlag |= FLAG_COMMIT_OFFSET;
+        }
+        if (suspendTimeout > 0) {
+            sysFlag |= FLAG_SUSPEND;
+        }
 
         PullMessageRequestHeader header = new PullMessageRequestHeader();
         header.setConsumerGroup(consumerGroup);
@@ -330,7 +460,7 @@ public class ProxyConsumer {
         header.setQueueOffset(offset);
         header.setMaxMsgNums(maxNums);
         header.setSysFlag(sysFlag);
-        header.setCommitOffset(0L);
+        header.setCommitOffset(commitOffset);
         header.setSuspendTimeoutMillis(suspendTimeout);
         header.setSubscription("*");
         header.setSubVersion(System.currentTimeMillis());
@@ -356,6 +486,11 @@ public class ProxyConsumer {
             }
             result.setBody(response.getBody());
         } else if (response.getCode() == ResponseCode.PULL_NOT_FOUND) {
+            result.setSuccess(true);
+            result.setFound(false);
+            result.setResponseCode(response.getCode());
+            parsePullExtFields(result, extFields);
+        } else if (response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY) {
             result.setSuccess(true);
             result.setFound(false);
             result.setResponseCode(response.getCode());

@@ -13,7 +13,7 @@ import static org.junit.Assert.*;
 public class MockStorageAdapterTest {
 
     private MockStorageAdapter adapter;
-    private static final String BROKER_ADDR = "127.0.0.1:10911";
+    private static final String BROKER_ADDR = "127.0.0.1:19876";
 
     @Before
     public void setUp() {
@@ -58,7 +58,7 @@ public class MockStorageAdapterTest {
 
         adapter.putMessage(message, BROKER_ADDR);
 
-        PullResult result = adapter.pullMessage("TestGroup", "TestTopic", 1, 0, 10, 3000, null, null, BROKER_ADDR);
+        PullResult result = adapter.pullMessage("TestGroup", "TestTopic", 1, 0, 10, 0, 0L, 3000, null, null, BROKER_ADDR);
 
         assertEquals(0, result.getResponseCode());
         assertNotNull(result.getMessageList());
@@ -70,7 +70,7 @@ public class MockStorageAdapterTest {
 
     @Test
     public void testPullMessageNotFound() throws Exception {
-        PullResult result = adapter.pullMessage("TestGroup", "NonExistTopic", 0, 0, 10, 3000, null, null, BROKER_ADDR);
+        PullResult result = adapter.pullMessage("TestGroup", "NonExistTopic", 0, 0, 10, 0, 0L, 3000, null, null, BROKER_ADDR);
         assertEquals(19, result.getResponseCode());
     }
 

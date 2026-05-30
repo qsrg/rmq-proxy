@@ -1,7 +1,8 @@
 package com.mq.proxy.sdk.remoting;
 
+import com.mq.proxy.core.protocol.RemotingCommand;
 import io.netty.channel.ChannelHandlerContext;
 
 public interface SDKRequestProcessor {
-    void processRequest(ChannelHandlerContext ctx, com.mq.proxy.core.protocol.RemotingCommand request) throws Exception;
+    RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception;
 }

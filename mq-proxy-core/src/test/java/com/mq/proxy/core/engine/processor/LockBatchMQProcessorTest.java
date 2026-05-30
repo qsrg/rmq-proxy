@@ -194,4 +194,26 @@ public class LockBatchMQProcessorTest {
 
         assertEquals(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, response.getCode());
     }
+
+    @Test
+    public void testReleaseLocksOnChannelInactive() throws Exception {
+        LockBatchRequestBody lockRequest = new LockBatchRequestBody();
+        lockRequest.setConsumerGroup("testGroup");
+        lockRequest.setClientId("client-001");
+        Set<MessageQueue> mqSet = new HashSet<>();
+        mqSet.add(new MessageQueue("TestTopic", "broker-a", 0));
+        mqSet.add(new MessageQueue("TestTopic", "broker-a", 1));
+        lockRequest.setMqSet(mqSet);
+
+        RemotingCommand lockCmd = RemotingCommand.createRequestCommand(RequestCode.LOCK_BATCH_MQ, null);
+        lockCmd.setBody(lockRequest.encode());
+        RemotingCommand lockResponse = processor.processRequest(mockChannel, lockCmd);
+        assertEquals(RemotingSysResponseCode.SUCCESS, lockResponse.getCode());
+
+        assertFalse(processor.isLockOwned("testGroup", new MessageQueue("TestTopic", "broker-a", 0), "client-002"));
+
+        processor.releaseLocksByChannel(mockChannel);
+
+        assertTrue(processor.isLockOwned("testGroup", new MessageQueue("TestTopic", "broker-a", 0), "client-002"));
+    }
 }

@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public class ClientConnectionManager {
 
@@ -18,8 +19,18 @@ public class ClientConnectionManager {
 
     private final ConcurrentHashMap<Channel, ClientInfo> channelClientMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Channel> clientIdChannelMap = new ConcurrentHashMap<>();
+    private final List<Consumer<Channel>> channelInactiveListeners = new ArrayList<>();
+    private final List<Consumer<ClientInfo>> clientInactiveListeners = new ArrayList<>();
 
     private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
+
+    public void addChannelInactiveListener(Consumer<Channel> listener) {
+        channelInactiveListeners.add(listener);
+    }
+
+    public void addClientInactiveListener(Consumer<ClientInfo> listener) {
+        clientInactiveListeners.add(listener);
+    }
 
     public void registerProducer(Channel channel, String clientId, String producerGroup) {
         ClientInfo clientInfo = channelClientMap.computeIfAbsent(channel, k -> new ClientInfo(channel, clientId));
@@ -60,6 +71,7 @@ public class ClientConnectionManager {
         if (clientInfo == null) {
             return null;
         }
+        ClientInfo snapshot = clientInfo.snapshot();
 
         if (producerGroup != null) {
             clientInfo.removeProducerGroup(producerGroup);
@@ -78,7 +90,7 @@ public class ClientConnectionManager {
             log.info("Client partially unregistered: clientId={}, remaining producerGroups={}, consumerGroups={}",
                     clientInfo.getClientId(), clientInfo.getProducerGroups(), clientInfo.getConsumerGroups());
         }
-        return clientInfo;
+        return snapshot;
     }
 
     public void onChannelInactive(Channel channel) {
@@ -88,6 +100,12 @@ public class ClientConnectionManager {
             log.info("Channel inactive, client removed: clientId={}, channel={}, producerGroups={}, consumerGroups={}",
                     clientInfo.getClientId(), channel.remoteAddress(),
                     clientInfo.getProducerGroups(), clientInfo.getConsumerGroups());
+            for (Consumer<ClientInfo> listener : clientInactiveListeners) {
+                listener.accept(clientInfo);
+            }
+        }
+        for (Consumer<Channel> listener : channelInactiveListeners) {
+            listener.accept(channel);
         }
     }
 
@@ -100,6 +118,9 @@ public class ClientConnectionManager {
                 clientIdChannelMap.remove(clientInfo.getClientId());
                 log.info("Scanned and removed inactive channel: clientId={}, channel={}",
                         clientInfo.getClientId(), channel.remoteAddress());
+                for (Consumer<ClientInfo> listener : clientInactiveListeners) {
+                    listener.accept(clientInfo);
+                }
                 continue;
             }
             long diff = System.currentTimeMillis() - clientInfo.getLastUpdateTimestamp();
@@ -109,6 +130,9 @@ public class ClientConnectionManager {
                 channel.close();
                 log.info("Scanned and removed expired channel: clientId={}, channel={}, expiredMs={}",
                         clientInfo.getClientId(), channel.remoteAddress(), diff);
+                for (Consumer<ClientInfo> listener : clientInactiveListeners) {
+                    listener.accept(clientInfo);
+                }
             }
         }
     }
@@ -140,7 +164,18 @@ public class ClientConnectionManager {
                 consumerData.setConsumeFromWhere(clientInfo.getGroupConsumeFromWhere(group));
                 Set<HeartbeatData.SubscriptionData> subs = clientInfo.getSubscriptions(group);
                 if (subs != null) {
-                    consumerData.setSubscriptionDataSet(new HashSet<>(subs));
+                    Set<HeartbeatData.SubscriptionData> newSubs = new HashSet<>();
+                    for (HeartbeatData.SubscriptionData sub : subs) {
+                        HeartbeatData.SubscriptionData newSub = new HeartbeatData.SubscriptionData();
+                        newSub.setTopic(sub.getTopic());
+                        newSub.setSubString(sub.getSubString());
+                        newSub.setSubVersion(Long.MAX_VALUE);
+                        newSub.setClassFilterMode(sub.isClassFilterMode());
+                        newSub.setExpressionType(sub.getExpressionType());
+                        populateTagsAndCodes(newSub, sub.getSubString());
+                        newSubs.add(newSub);
+                    }
+                    consumerData.setSubscriptionDataSet(newSubs);
                 }
                 result.add(consumerData);
             }
@@ -184,6 +219,10 @@ public class ClientConnectionManager {
         return new ArrayList<>(channelClientMap.values());
     }
 
+    public ClientInfo getClientInfo(String clientId) {
+        return findClientById(clientId);
+    }
+
     private ClientInfo findClientById(String clientId) {
         if (clientId == null) return null;
         Channel channel = clientIdChannelMap.get(clientId);
@@ -196,6 +235,31 @@ public class ClientConnectionManager {
             }
         }
         return null;
+    }
+
+    private void populateTagsAndCodes(HeartbeatData.SubscriptionData subData, String subString) {
+        if (subString == null || subString.isEmpty() || "*".equals(subString)) {
+            subData.setTagsSet(Collections.emptySet());
+            subData.setCodeSet(Collections.emptySet());
+            return;
+        }
+        Set<String> tagsSet = new HashSet<>();
+        Set<Integer> codeSet = new HashSet<>();
+        if (subString.contains("||")) {
+            String[] tags = subString.split("\\|\\|");
+            for (String tag : tags) {
+                String trimmed = tag.trim();
+                if (!trimmed.isEmpty()) {
+                    tagsSet.add(trimmed);
+                    codeSet.add(trimmed.hashCode());
+                }
+            }
+        } else {
+            tagsSet.add(subString);
+            codeSet.add(subString.hashCode());
+        }
+        subData.setTagsSet(tagsSet);
+        subData.setCodeSet(codeSet);
     }
 
     public static class ClientInfo {
@@ -269,5 +333,22 @@ public class ClientConnectionManager {
         public void setConsumeFromWhere(String consumeFromWhere) { this.consumeFromWhere = consumeFromWhere; }
         public long getLastUpdateTimestamp() { return lastUpdateTimestamp; }
         public void setLastUpdateTimestamp(long lastUpdateTimestamp) { this.lastUpdateTimestamp = lastUpdateTimestamp; }
+
+        private ClientInfo snapshot() {
+            ClientInfo copy = new ClientInfo(channel, clientId);
+            copy.producerGroups.addAll(this.producerGroups);
+            copy.consumerGroups.addAll(this.consumerGroups);
+            for (ConcurrentHashMap.Entry<String, Set<HeartbeatData.SubscriptionData>> entry : this.subscriptionTable.entrySet()) {
+                copy.subscriptionTable.put(entry.getKey(), new HashSet<>(entry.getValue()));
+            }
+            copy.consumeType = this.consumeType;
+            copy.messageModel = this.messageModel;
+            copy.consumeFromWhere = this.consumeFromWhere;
+            copy.lastUpdateTimestamp = this.lastUpdateTimestamp;
+            copy.groupConsumeTypeTable.putAll(this.groupConsumeTypeTable);
+            copy.groupMessageModelTable.putAll(this.groupMessageModelTable);
+            copy.groupConsumeFromWhereTable.putAll(this.groupConsumeFromWhereTable);
+            return copy;
+        }
     }
 }

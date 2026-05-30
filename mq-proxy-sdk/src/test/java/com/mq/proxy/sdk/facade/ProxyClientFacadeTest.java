@@ -62,7 +62,7 @@ public class ProxyClientFacadeTest {
         MockitoAnnotations.initMocks(this);
 
         config = new ProxyProducerConfig();
-        config.setProxyAddrs("proxy1:10911;proxy2:10912;proxy3:10913");
+        config.setProxyAddrs("proxy1:19876;proxy2:19877;proxy3:19878");
         config.setRetryTimes(3);
         config.setRequestTimeoutMillis(3000);
         config.setFaultIsolationDurationMillis(30000);
@@ -237,7 +237,7 @@ public class ProxyClientFacadeTest {
     @Test
     public void testNoAvailableAddress() throws Exception {
         // Given: 只有一个代理地址，失败后没有其他可用地址
-        config.setProxyAddrs("proxy1:10911");
+        config.setProxyAddrs("proxy1:19876");
         facade = new ProxyClientFacade(config) {
             @Override
             public void start() {}
@@ -246,7 +246,7 @@ public class ProxyClientFacadeTest {
 
         RemotingCommand request = createTestRequest();
 
-        when(mockChannelManager.getOrCreateChannel("proxy1:10911")).thenReturn(mockChannel1);
+        when(mockChannelManager.getOrCreateChannel("proxy1:19876")).thenReturn(mockChannel1);
         when(mockRemotingClient.invokeSync(eq(mockChannel1), eq(request), anyLong()))
             .thenThrow(new RuntimeException("Connection refused"));
 
@@ -264,7 +264,7 @@ public class ProxyClientFacadeTest {
     @Test
     public void testFaultIsolationRecovery() throws Exception {
         // Given: 配置短时间的故障隔离（100ms）
-        config.setProxyAddrs("proxy1:10911;proxy2:10912");
+        config.setProxyAddrs("proxy1:19876;proxy2:19877");
         config.setFaultIsolationDurationMillis(100);
         facade = new ProxyClientFacade(config) {
             @Override
@@ -307,7 +307,7 @@ public class ProxyClientFacadeTest {
     @Test
     public void testConfigurableRetryTimes() throws Exception {
         // Given: 配置重试次数为5次，并且有5个代理地址可供重试
-        config.setProxyAddrs("proxy1:10911;proxy2:10912;proxy3:10913;proxy4:10914;proxy5:10915");
+        config.setProxyAddrs("proxy1:19876;proxy2:19877;proxy3:19878;proxy4:19879;proxy5:19880");
         config.setRetryTimes(5);
         facade = new ProxyClientFacade(config) {
             @Override

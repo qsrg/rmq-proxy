@@ -20,14 +20,14 @@ import java.util.Map;
  * <pre>
  * // 简单使用（类似RocketMQ）
  * ProxyProducer producer = new ProxyProducer("ProducerGroup");
- * producer.setProxyAddrs("127.0.0.1:10911");
+ * producer.setProxyAddrs("127.0.0.1:19876");
  * producer.start();
  * SendResult result = producer.send("Topic", "TagA", "Hello".getBytes());
  * producer.shutdown();
  *
  * // 链式配置
  * ProxyProducer producer = new ProxyProducer("ProducerGroup")
- *     .setProxyAddrs("127.0.0.1:10911")
+ *     .setProxyAddrs("127.0.0.1:19876")
  *     .setRetryTimes(3)
  *     .setEnableTrace(true);
  * producer.start();
@@ -131,6 +131,11 @@ public class ProxyProducer {
 
     public SendResult send(String topic, String tags, String keys, byte[] body, int delayLevel)
             throws ProxyException {
+        return send(topic, tags, keys, body, delayLevel, -1);
+    }
+
+    public SendResult send(String topic, String tags, String keys, byte[] body, int delayLevel, int queueId)
+            throws ProxyException {
 
         ensureStarted();
 
@@ -142,7 +147,7 @@ public class ProxyProducer {
         long startTime = System.currentTimeMillis();
 
         try {
-            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, traceId);
+            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, queueId, traceId);
             RemotingCommand response = facade.invokeSync(request, config.getRequestTimeoutMillis());
 
             SendResult result = parseSendResult(response);
@@ -185,7 +190,7 @@ public class ProxyProducer {
         final String finalTraceId = traceId;
 
         try {
-            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, traceId);
+            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, -1, traceId);
 
             facade.invokeAsync(request, config.getRequestTimeoutMillis(), new InvokeCallback() {
                 @Override
@@ -232,7 +237,7 @@ public class ProxyProducer {
         ensureStarted();
 
         try {
-            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, null);
+            RemotingCommand request = buildSendMessageRequest(topic, tags, keys, body, delayLevel, -1, null);
             facade.invokeOneway(request);
         } catch (Exception e) {
             if (e instanceof ProxyException) {
@@ -265,13 +270,13 @@ public class ProxyProducer {
     }
 
     private RemotingCommand buildSendMessageRequest(String topic, String tags, String keys,
-                                                    byte[] body, int delayLevel, String traceId) {
+                                                    byte[] body, int delayLevel, int queueId, String traceId) {
         SendMessageRequestHeader header = new SendMessageRequestHeader();
         header.setProducerGroup(config.getProducerGroup());
         header.setTopic(topic);
         header.setDefaultTopic("TBW102");
         header.setDefaultTopicQueueNums(4);
-        header.setQueueId(-1);
+        header.setQueueId(queueId);
         header.setSysFlag(0);
         header.setBornTimestamp(System.currentTimeMillis());
         header.setFlag(0);

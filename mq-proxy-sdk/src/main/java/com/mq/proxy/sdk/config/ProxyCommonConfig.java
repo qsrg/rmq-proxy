@@ -5,7 +5,7 @@ package com.mq.proxy.sdk.config;
  */
 public class ProxyCommonConfig {
 
-    private String proxyAddrs = "127.0.0.1:10911";
+    private String proxyAddrs = "127.0.0.1:19876";
 
     private int connectTimeoutMillis = 3000;
     private int requestTimeoutMillis = 3000;

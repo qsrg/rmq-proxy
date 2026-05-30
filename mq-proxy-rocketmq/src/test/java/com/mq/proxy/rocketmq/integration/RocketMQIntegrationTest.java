@@ -10,6 +10,7 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
+import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
@@ -24,7 +25,9 @@ import org.junit.Test;
 
 import java.net.ServerSocket;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.Assert.*;
 
@@ -71,15 +74,20 @@ public class RocketMQIntegrationTest {
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapter, "127.0.0.1", proxyPort);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
+
+        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
 
         NettyServerConfig serverConfig = new NettyServerConfig();
         serverConfig.setListenPort(proxyPort);
         proxyServer = new NettyRemotingServer(serverConfig);
         proxyServer.setClientConnectionManager(clientConnectionManager);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager, clientConnectionManager);
-        proxyServer.start();
         messageEngine.setRemotingServer(proxyServer);
+        heartbeatService.setRemotingServer(proxyServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
+        proxyServer.start();
         heartbeatService.start();
 
         proxyClient = new NettyRemotingClient(new NettyClientConfig());
@@ -210,6 +218,8 @@ public class RocketMQIntegrationTest {
         int queueId = Integer.parseInt(sendResponse.getExtFields().get("queueId"));
         long queueOffset = Long.parseLong(sendResponse.getExtFields().get("queueOffset"));
 
+        registerConsumerHeartbeat(proxyAddr, "pull-test-client", CONSUMER_GROUP, TEST_TOPIC, "*");
+
         Thread.sleep(500);
 
         HashMap<String, String> pullExtFields = new HashMap<>();
@@ -230,12 +240,43 @@ public class RocketMQIntegrationTest {
         RemotingCommand pullResponse = proxyClient.invokeSync(proxyAddr, pullRequest, 10000);
         System.out.println("Pull response: code=" + pullResponse.getCode() + ", bodyLen=" + (pullResponse.getBody() != null ? pullResponse.getBody().length : 0));
 
-        assertTrue("Pull should return SUCCESS, PULL_NOT_FOUND, PULL_RETRY_IMMEDIATELY or SUBSCRIPTION_GROUP_NOT_EXIST",
-                pullResponse.getCode() == RemotingSysResponseCode.SUCCESS
-                        || pullResponse.getCode() == ResponseCode.PULL_NOT_FOUND
-                        || pullResponse.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY
-                        || pullResponse.getCode() == 24);
+        assertEquals("Pull should succeed for a registered consumer", RemotingSysResponseCode.SUCCESS,
+                pullResponse.getCode());
+        assertNotNull("Pull response body should contain the sent message", pullResponse.getBody());
+        assertTrue("Pull response body should not be empty", pullResponse.getBody().length > 0);
 
+    }
+
+    private void registerConsumerHeartbeat(String proxyAddr, String clientId,
+                                           String consumerGroup, String topic, String subString) throws Exception {
+        HeartbeatData heartbeatData = new HeartbeatData();
+        heartbeatData.setClientID(clientId);
+
+        Set<HeartbeatData.ConsumerData> consumerDataSet = new HashSet<>();
+        HeartbeatData.ConsumerData consumerData = new HeartbeatData.ConsumerData();
+        consumerData.setGroupName(consumerGroup);
+        consumerData.setConsumeType("CONSUME_PASSIVELY");
+        consumerData.setMessageModel("CLUSTERING");
+        consumerData.setConsumeFromWhere("CONSUME_FROM_LAST_OFFSET");
+
+        Set<HeartbeatData.SubscriptionData> subscriptionDataSet = new HashSet<>();
+        HeartbeatData.SubscriptionData subscriptionData = new HeartbeatData.SubscriptionData();
+        subscriptionData.setTopic(topic);
+        subscriptionData.setSubString(subString);
+        subscriptionData.setSubVersion(System.currentTimeMillis());
+        subscriptionData.setExpressionType("TAG");
+        subscriptionDataSet.add(subscriptionData);
+
+        consumerData.setSubscriptionDataSet(subscriptionDataSet);
+        consumerDataSet.add(consumerData);
+        heartbeatData.setConsumerDataSet(consumerDataSet);
+
+        RemotingCommand heartbeatRequest = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
+        heartbeatRequest.setBody(heartbeatData.encode());
+
+        RemotingCommand heartbeatResponse = proxyClient.invokeSync(proxyAddr, heartbeatRequest, 10000);
+        assertEquals("Consumer heartbeat registration should succeed", RemotingSysResponseCode.SUCCESS,
+                heartbeatResponse.getCode());
     }
 
     @Test

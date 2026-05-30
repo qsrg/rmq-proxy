@@ -82,15 +82,20 @@ public class ConsumerDebugTest {
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
+
+        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
 
         NettyServerConfig serverConfig = new NettyServerConfig();
         serverConfig.setListenPort(proxyPort);
         proxyServer = new NettyRemotingServer(serverConfig);
         proxyServer.setClientConnectionManager(clientConnectionManager);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager, clientConnectionManager);
-        proxyServer.start();
         messageEngine.setRemotingServer(proxyServer);
+        heartbeatService.setRemotingServer(proxyServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
+        proxyServer.start();
         heartbeatService.start();
 
         System.out.println("Proxy started on 127.0.0.1:" + proxyPort);
@@ -163,7 +168,18 @@ public class ConsumerDebugTest {
             System.out.println("Consumer subscribed topic: " + TOPIC + " with tag: " + uniqueTag);
             consumer.start();
             System.out.println("Consumer started, waiting for rebalance...");
-            Thread.sleep(15000);
+            
+            Thread.sleep(5000);
+            
+            try {
+                java.util.Set<org.apache.rocketmq.common.message.MessageQueue> mqSet = consumer.fetchSubscribeMessageQueues(TOPIC);
+                System.out.println("Consumer fetched " + mqSet.size() + " message queue(s) for topic " + TOPIC + ": " + mqSet);
+            } catch (Exception e) {
+                System.out.println("Failed to fetch message queues: " + e.getMessage());
+                e.printStackTrace();
+            }
+            
+            Thread.sleep(10000);
 
             System.out.println("\n=== STEP 2: Starting producer and sending message ===");
             producer.start();

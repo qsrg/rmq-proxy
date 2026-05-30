@@ -1,6 +1,7 @@
 package com.mq.proxy.sdk.remoting;
 
 import com.mq.proxy.core.protocol.RemotingCommand;
+import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
@@ -46,12 +47,34 @@ public class ProxyClientHandler extends SimpleChannelInboundHandler<RemotingComm
         SDKRequestProcessor processor = processorTable.get(requestCode);
         if (processor != null) {
             try {
-                processor.processRequest(ctx, msg);
+                RemotingCommand response = processor.processRequest(ctx, msg);
+                if (!msg.isOnewayRPC()) {
+                    if (response == null) {
+                        response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+                    }
+                    response.setOpaque(msg.getOpaque());
+                    response.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
+                    ctx.writeAndFlush(response);
+                }
             } catch (Exception e) {
                 log.error("Process server-push request error, code={}, opaque={}", requestCode, msg.getOpaque(), e);
+                if (!msg.isOnewayRPC()) {
+                    RemotingCommand errorResponse = RemotingCommand.createResponseCommand(
+                        RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());
+                    errorResponse.setOpaque(msg.getOpaque());
+                    errorResponse.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
+                    ctx.writeAndFlush(errorResponse);
+                }
             }
         } else {
             log.warn("Receive server-push request, but no processor registered, code={}, opaque={}", requestCode, msg.getOpaque());
+            if (!msg.isOnewayRPC()) {
+                RemotingCommand response = RemotingCommand.createResponseCommand(
+                    RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, "no sdk processor registered");
+                response.setOpaque(msg.getOpaque());
+                response.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
+                ctx.writeAndFlush(response);
+            }
         }
     }
 

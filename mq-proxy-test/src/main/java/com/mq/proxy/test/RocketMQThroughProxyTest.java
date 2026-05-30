@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class RocketMQThroughProxyTest {
     
-    private static final String PROXY_ADDR = "127.0.0.1:10913";
+    private static final String PROXY_ADDR = "127.0.0.1:19876";
     private static final String TOPIC = "TestTopic";
     private static final String PRODUCER_GROUP = "TestProducerGroup";
     private static final String CONSUMER_GROUP = "TestConsumerGroup";
@@ -30,7 +30,7 @@ public class RocketMQThroughProxyTest {
         System.out.println();
         System.out.println("配置信息:");
         System.out.println("  NameServer: 127.0.0.1:9876");
-        System.out.println("  Broker: 127.0.0.1:10911");
+        System.out.println("  Broker: 127.0.0.1:19876");
         System.out.println("  Proxy: " + PROXY_ADDR);
         System.out.println("  Topic: " + TOPIC);
         System.out.println();

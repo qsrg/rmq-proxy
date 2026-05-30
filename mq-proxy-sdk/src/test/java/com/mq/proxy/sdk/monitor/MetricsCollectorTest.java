@@ -19,9 +19,9 @@ public class MetricsCollectorTest {
     
     @Test
     public void testRecordSuccess() {
-        collector.recordSuccess("192.168.1.100:10911", 100);
+        collector.recordSuccess("192.168.1.100:19876", 100);
         
-        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:10911");
+        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:19876");
         
         assertNotNull(snapshot);
         assertEquals(1, snapshot.getSuccessCount());
@@ -31,9 +31,9 @@ public class MetricsCollectorTest {
     
     @Test
     public void testRecordFailure() {
-        collector.recordFailure("192.168.1.100:10911", new RuntimeException("test"));
+        collector.recordFailure("192.168.1.100:19876", new RuntimeException("test"));
         
-        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:10911");
+        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:19876");
         
         assertNotNull(snapshot);
         assertEquals(1, snapshot.getFailureCount());
@@ -42,11 +42,11 @@ public class MetricsCollectorTest {
     
     @Test
     public void testSuccessRate() {
-        collector.recordSuccess("192.168.1.100:10911", 100);
-        collector.recordSuccess("192.168.1.100:10911", 200);
-        collector.recordFailure("192.168.1.100:10911", new RuntimeException("test"));
+        collector.recordSuccess("192.168.1.100:19876", 100);
+        collector.recordSuccess("192.168.1.100:19876", 200);
+        collector.recordFailure("192.168.1.100:19876", new RuntimeException("test"));
         
-        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:10911");
+        ProxyMetricsSnapshot snapshot = collector.getSnapshot().get("192.168.1.100:19876");
         
         assertEquals(2.0 / 3.0, snapshot.getSuccessRate(), 0.001);
     }

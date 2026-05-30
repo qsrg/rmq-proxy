@@ -161,8 +161,11 @@ public class HeartbeatData {
     public static class SubscriptionData {
         private String topic;
         private String subString;
+        private long subVersion;
         private Set<String> tagsSet = new HashSet<>();
-        private Set<String> codeSet = new HashSet<>();
+        private Set<Integer> codeSet = new HashSet<>();
+        private boolean classFilterMode;
+        private String expressionType;
 
         public String getTopic() {
             return topic;
@@ -180,6 +183,14 @@ public class HeartbeatData {
             this.subString = subString;
         }
 
+        public long getSubVersion() {
+            return subVersion;
+        }
+
+        public void setSubVersion(long subVersion) {
+            this.subVersion = subVersion;
+        }
+
         public Set<String> getTagsSet() {
             return tagsSet;
         }
@@ -188,12 +199,28 @@ public class HeartbeatData {
             this.tagsSet = tagsSet;
         }
 
-        public Set<String> getCodeSet() {
+        public Set<Integer> getCodeSet() {
             return codeSet;
         }
 
-        public void setCodeSet(Set<String> codeSet) {
+        public void setCodeSet(Set<Integer> codeSet) {
             this.codeSet = codeSet;
+        }
+
+        public boolean isClassFilterMode() {
+            return classFilterMode;
+        }
+
+        public void setClassFilterMode(boolean classFilterMode) {
+            this.classFilterMode = classFilterMode;
+        }
+
+        public String getExpressionType() {
+            return expressionType;
+        }
+
+        public void setExpressionType(String expressionType) {
+            this.expressionType = expressionType;
         }
 
         @Override

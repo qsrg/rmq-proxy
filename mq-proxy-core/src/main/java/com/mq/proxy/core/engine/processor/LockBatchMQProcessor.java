@@ -153,6 +153,20 @@ public class LockBatchMQProcessor implements RemotingProcessor {
         return lockEntry.isOwnedBy(clientId);
     }
 
+    public void releaseLocksByChannel(Channel channel) {
+        for (ConcurrentHashMap.Entry<String, ConcurrentHashMap<MessageQueue, LockEntry>> groupEntry : lockTable.entrySet()) {
+            ConcurrentHashMap<MessageQueue, LockEntry> groupLocks = groupEntry.getValue();
+            groupLocks.entrySet().removeIf(entry -> {
+                if (entry.getValue().getChannel() == channel) {
+                    log.info("Release lock on channel inactive: group={}, mq={}, clientId={}",
+                            groupEntry.getKey(), entry.getKey(), entry.getValue().getClientId());
+                    return true;
+                }
+                return false;
+            });
+        }
+    }
+
     private static class LockEntry {
         private String clientId;
         private Channel channel;

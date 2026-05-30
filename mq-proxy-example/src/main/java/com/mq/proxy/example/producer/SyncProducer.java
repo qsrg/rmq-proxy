@@ -10,7 +10,7 @@ public class SyncProducer {
 
     public static void main(String[] args) throws Exception {
         ProxyProducer producer = new ProxyProducer("SyncProducerGroup")
-            .setProxyAddrs("127.0.0.1:11911");
+            .setProxyAddrs("127.0.0.1:19876");
 
         producer.start();
 

@@ -2,8 +2,10 @@ package com.mq.proxy.sdk.remoting;
 
 import com.mq.proxy.core.protocol.RemotingCommand;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelFuture;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +33,7 @@ public class ProxyClientHandlerTest {
         processorTable = new ConcurrentHashMap<>();
         handler = new ProxyClientHandler(responseTable, processorTable);
         mockCtx = mock(ChannelHandlerContext.class);
+        when(mockCtx.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
     }
 
     /**
@@ -61,11 +64,12 @@ public class ProxyClientHandlerTest {
         // NOTIFY_CONSUMER_IDS_CHANGED = 40
         processorTable.put(40, new SDKRequestProcessor() {
             @Override
-            public void processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
+            public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
                 HashMap<String, String> ext = request.getExtFields();
                 if (ext != null) {
                     capturedGroup[0] = ext.get("consumerGroup");
                 }
+                return RemotingCommand.createResponseCommand(0, "ok");
             }
         });
 
@@ -77,6 +81,10 @@ public class ProxyClientHandlerTest {
         handler.channelRead0(mockCtx, notification);
 
         assertEquals("GroupA", capturedGroup[0]);
+        ArgumentCaptor<RemotingCommand> responseCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockCtx).writeAndFlush(responseCaptor.capture());
+        assertTrue(responseCaptor.getValue().isResponseType());
+        assertEquals(notification.getOpaque(), responseCaptor.getValue().getOpaque());
     }
 
     /**
@@ -93,8 +101,9 @@ public class ProxyClientHandlerTest {
         // server-push request opaque恰好是200，但有不同requestCode
         processorTable.put(40, new SDKRequestProcessor() {
             @Override
-            public void processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
+            public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
                 // 正常处理推送通知
+                return RemotingCommand.createResponseCommand(0, "ok");
             }
         });
 
@@ -134,8 +143,9 @@ public class ProxyClientHandlerTest {
         final int[] processorCalled = new int[1];
         processorTable.put(40, new SDKRequestProcessor() {
             @Override
-            public void processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
+            public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws Exception {
                 processorCalled[0]++;
+                return RemotingCommand.createResponseCommand(0, "ok");
             }
         });
 
@@ -161,5 +171,25 @@ public class ProxyClientHandlerTest {
         assertEquals(1, processorCalled[0]);
         assertEquals(response, future.getResponse());
         assertFalse(responseTable.containsKey(1001));
+    }
+
+    @Test
+    public void testProcessorExceptionReturnsErrorResponse() throws Exception {
+        processorTable.put(40, new SDKRequestProcessor() {
+            @Override
+            public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) {
+                throw new RuntimeException("boom");
+            }
+        });
+
+        RemotingCommand notification = RemotingCommand.createRequestCommand(40, null);
+        notification.setOpaque(321);
+
+        handler.channelRead0(mockCtx, notification);
+
+        ArgumentCaptor<RemotingCommand> responseCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockCtx).writeAndFlush(responseCaptor.capture());
+        assertTrue(responseCaptor.getValue().isResponseType());
+        assertEquals(321, responseCaptor.getValue().getOpaque());
     }
 }

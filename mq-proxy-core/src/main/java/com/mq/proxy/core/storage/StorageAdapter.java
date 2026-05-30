@@ -13,7 +13,7 @@ public interface StorageAdapter {
 
     PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception;
 
-    PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception;
+    PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception;
 
     OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception;
 

@@ -12,6 +12,9 @@ import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
 import io.netty.channel.Channel;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -19,6 +22,8 @@ import java.util.HashMap;
 import java.util.List;
 
 public class PullMessageProcessor implements RemotingProcessor {
+
+    private static final Logger log = LoggerFactory.getLogger(PullMessageProcessor.class);
 
     private final MessageEngine messageEngine;
     private VirtualRouteManager virtualRouteManager;
@@ -39,17 +44,34 @@ public class PullMessageProcessor implements RemotingProcessor {
         int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
         String brokerName = resolveBrokerName(topic, queueId, request);
 
+        log.info("PULL_REQUEST: group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
+                requestHeader.getConsumerGroup(), topic, queueId,
+                requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(),
+                requestHeader.getSysFlag(), requestHeader.getCommitOffset(),
+                requestHeader.getSuspendTimeoutMillis(),
+                requestHeader.getSubscription(), requestHeader.getExpressionType(),
+                brokerName);
+
         PullResult pullResult = messageEngine.pullMessage(
                 requestHeader.getConsumerGroup(),
                 topic,
                 queueId,
                 requestHeader.getQueueOffset() != null ? requestHeader.getQueueOffset() : 0,
                 requestHeader.getMaxMsgNums() != null ? requestHeader.getMaxMsgNums() : 32,
+                requestHeader.getSysFlag() != null ? requestHeader.getSysFlag() : 0,
+                requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : 0,
                 requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0,
                 requestHeader.getSubscription(),
                 requestHeader.getExpressionType(),
                 brokerName
         );
+
+        log.info("PULL_RESULT: group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
+                requestHeader.getConsumerGroup(), topic, queueId,
+                pullResult.getResponseCode(), pullResult.getNextBeginOffset(),
+                pullResult.getMinOffset(), pullResult.getMaxOffset(),
+                pullResult.getSuggestWhichBrokerId(),
+                pullResult.getMessageBinary() != null && pullResult.getMessageBinary().length > 0);
 
         PullMessageResponseHeader responseHeader = new PullMessageResponseHeader();
         responseHeader.setNextBeginOffset(pullResult.getNextBeginOffset());
@@ -71,12 +93,23 @@ public class PullMessageProcessor implements RemotingProcessor {
             response.setBody(encodeMessageList(pullResult.getMessageList()));
         }
 
+        int originalResponseCode = pullResult.getResponseCode();
         if (pullResult.getResponseCode() == RemotingSysResponseCode.SUCCESS
                 || pullResult.getResponseCode() == ResponseCode.PULL_NOT_FOUND
                 || pullResult.getResponseCode() == ResponseCode.PULL_RETRY_IMMEDIATELY
                 || pullResult.getResponseCode() == ResponseCode.PULL_OFFSET_MOVED) {
             response.setCode(pullResult.getResponseCode());
+        } else if (pullResult.getResponseCode() == ResponseCode.SUBSCRIPTION_NOT_EXIST
+                || pullResult.getResponseCode() == ResponseCode.SUBSCRIPTION_NOT_LATEST) {
+            response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);
+            messageEngine.triggerHeartbeatForward();
+            log.info("PULL_SUBSCRIPTION_ISSUE: originalCode={}, convertedTo=PULL_RETRY_IMMEDIATELY, triggered heartbeat", originalResponseCode);
         }
+
+        log.info("PULL_RESPONSE: group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
+                requestHeader.getConsumerGroup(), topic, queueId,
+                response.getCode(), responseHeader.getNextBeginOffset(),
+                responseHeader.getMinOffset(), responseHeader.getMaxOffset());
 
         return response;
     }

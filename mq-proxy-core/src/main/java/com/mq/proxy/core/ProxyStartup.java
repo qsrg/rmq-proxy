@@ -62,7 +62,10 @@ public class ProxyStartup {
         ClientConnectionManager clientConnectionManager = new ClientConnectionManager();
 
         ProxyBrokerHeartbeatService heartbeatService = new ProxyBrokerHeartbeatService(
-                clientConnectionManager, storageAdapter, proxyConfig.getProxyHost(), proxyConfig.getListenPort());
+                clientConnectionManager, storageAdapter, proxyConfig.getProxyHost(), proxyConfig.getListenPort(),
+                virtualRouteManager);
+
+        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
 
         NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(proxyConfig.getListenPort());
@@ -82,7 +85,10 @@ public class ProxyStartup {
         NettyRemotingServer remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);
         messageEngine.setRemotingServer(remotingServer);
-        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager, clientConnectionManager);
+        heartbeatService.setRemotingServer(remotingServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
 
         remotingServer.start();
         heartbeatService.start();

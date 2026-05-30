@@ -16,16 +16,16 @@ public class ProxyAddressManagerTest {
     
     @Test
     public void testParseSingleAddress() {
-        config.setProxyAddrs("192.168.1.100:10911");
+        config.setProxyAddrs("192.168.1.100:19876");
         ProxyAddressManager manager = new ProxyAddressManager(config);
         
         String addr = manager.selectProxyAddr();
-        assertEquals("192.168.1.100:10911", addr);
+        assertEquals("192.168.1.100:19876", addr);
     }
     
     @Test
     public void testParseMultipleAddresses() {
-        config.setProxyAddrs("192.168.1.100:10911;192.168.1.101:10911;192.168.1.102:10911");
+        config.setProxyAddrs("192.168.1.100:19876;192.168.1.101:19876;192.168.1.102:19876");
         ProxyAddressManager manager = new ProxyAddressManager(config);
         
         String addr1 = manager.selectProxyAddr();
@@ -39,7 +39,7 @@ public class ProxyAddressManagerTest {
     
     @Test
     public void testMarkFault() {
-        config.setProxyAddrs("192.168.1.100:10911;192.168.1.101:10911");
+        config.setProxyAddrs("192.168.1.100:19876;192.168.1.101:19876");
         config.setFaultIsolationDurationMillis(60000L);
         ProxyAddressManager manager = new ProxyAddressManager(config);
         
@@ -52,7 +52,7 @@ public class ProxyAddressManagerTest {
     
     @Test
     public void testClearFault() {
-        config.setProxyAddrs("192.168.1.100:10911;192.168.1.101:10911");
+        config.setProxyAddrs("192.168.1.100:19876;192.168.1.101:19876");
         ProxyAddressManager manager = new ProxyAddressManager(config);
         
         String addr = manager.selectProxyAddr();

@@ -57,13 +57,13 @@ public class ProxyProducerTest {
     public void testSimplifiedAPI() {
         // 测试简化API（链式配置）
         ProxyProducer producer = new ProxyProducer("GroupA")
-            .setProxyAddrs("127.0.0.1:10911")
+            .setProxyAddrs("127.0.0.1:19876")
             .setRetryTimes(3)
             .setEnableTrace(true);
 
         assertNotNull(producer);
         assertEquals("GroupA", producer.getConfig().getProducerGroup());
-        assertEquals("127.0.0.1:10911", producer.getConfig().getProxyAddrs());
+        assertEquals("127.0.0.1:19876", producer.getConfig().getProxyAddrs());
         assertEquals(3, producer.getConfig().getRetryTimes());
         assertTrue(producer.getConfig().isEnableTrace());
     }
@@ -111,6 +111,26 @@ public class ProxyProducerTest {
 
         assertFalse(result.isSuccess());
         assertEquals("broker busy", result.getErrorMsg());
+    }
+
+    @Test
+    public void testSendWithQueueId() throws Exception {
+        RemotingCommand successResponse = buildSendSuccessResponse("msg456", 2, 300L);
+        when(mockFacade.invokeSync(any(RemotingCommand.class), anyLong())).thenReturn(successResponse);
+
+        SendResult result = producer.send("OrderlyTopic", "TagA", "Order_001", "order step 0".getBytes(), 0, 2);
+
+        assertTrue(result.isSuccess());
+        assertEquals("msg456", result.getMsgId());
+        assertEquals(2, result.getQueueId());
+        assertEquals(300L, result.getQueueOffset());
+
+        ArgumentCaptor<RemotingCommand> requestCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockFacade).invokeSync(requestCaptor.capture(), anyLong());
+
+        RemotingCommand request = requestCaptor.getValue();
+        HashMap<String, String> extFields = request.getExtFields();
+        assertEquals("2", extFields.get("queueId"));
     }
 
     private RemotingCommand buildSendSuccessResponse(String msgId, int queueId, long queueOffset) {

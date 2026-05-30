@@ -15,7 +15,7 @@ import java.util.Set;
 
 public class ConsumerTest {
     
-    private static final String PROXY_ADDR = "127.0.0.1:10913";
+    private static final String PROXY_ADDR = "127.0.0.1:19876";
     private static final String TOPIC = "ConsumerTestTopic";
     private static final String PRODUCER_GROUP = "ConsumerTestProducerGroup";
     private static final String CONSUMER_GROUP = "ConsumerTestConsumerGroup";

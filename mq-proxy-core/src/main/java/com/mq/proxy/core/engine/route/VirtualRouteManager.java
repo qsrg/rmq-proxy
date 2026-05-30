@@ -8,13 +8,23 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class VirtualRouteManager {
+
+    private static final Logger log = LoggerFactory.getLogger(VirtualRouteManager.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final NettyRemotingClient namesrvClient;
     private String namesrvAddr;
@@ -95,7 +105,59 @@ public class VirtualRouteManager {
     }
 
     public List<String> getAllRealBrokerAddrs() {
+        if (this.brokerNameToRealAddr.isEmpty()) {
+            discoverBrokers();
+        }
         return new ArrayList<>(this.brokerNameToRealAddr.values());
+    }
+
+    public void discoverBrokers() {
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
+        request.makeCustomHeaderToNet();
+
+        try {
+            RemotingCommand response = this.namesrvClient.invokeSync(this.namesrvAddr, request, 3000);
+            if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
+                parseClusterInfoAndPopulateCache(response.getBody());
+            } else {
+                log.warn("Failed to discover brokers, response code: {}", response.getCode());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to discover brokers from NameServer: {}", e.getMessage());
+        }
+    }
+
+    private void parseClusterInfoAndPopulateCache(byte[] data) {
+        try {
+            String json = new String(data, StandardCharsets.UTF_8);
+            json = RouteInfoSerializer.fixNumericKeys(json);
+            JsonNode root = MAPPER.readTree(json);
+            JsonNode brokerAddrTable = root.get("brokerAddrTable");
+            if (brokerAddrTable != null) {
+                Iterator<Map.Entry<String, JsonNode>> fields = brokerAddrTable.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = fields.next();
+                    String brokerName = entry.getKey();
+                    JsonNode brokerData = entry.getValue();
+                    JsonNode brokerAddrs = brokerData.get("brokerAddrs");
+                    if (brokerAddrs != null) {
+                        Iterator<Map.Entry<String, JsonNode>> addrFields = brokerAddrs.fields();
+                        while (addrFields.hasNext()) {
+                            Map.Entry<String, JsonNode> addrEntry = addrFields.next();
+                            long brokerId = Long.parseLong(addrEntry.getKey());
+                            String addr = addrEntry.getValue().asText();
+                            this.brokerNameAndIdToRealAddr.put(brokerName + ":" + brokerId, addr);
+                            if (brokerId == 0L) {
+                                this.brokerNameToRealAddr.put(brokerName, addr);
+                            }
+                        }
+                    }
+                }
+            }
+            log.info("Discovered {} broker(s) from NameServer", this.brokerNameToRealAddr.size());
+        } catch (Exception e) {
+            log.warn("Failed to parse cluster info: {}", e.getMessage());
+        }
     }
 
     public String findBrokerNameByTopicAndQueueId(String topic, int queueId) {

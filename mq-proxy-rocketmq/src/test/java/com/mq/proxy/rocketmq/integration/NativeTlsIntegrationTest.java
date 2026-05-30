@@ -74,7 +74,9 @@ public class NativeTlsIntegrationTest {
         messageEngine.setVirtualRouteManager(virtualRouteManager);
 
         clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort);
+        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
+
+        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
 
         NettyServerConfig serverConfig = new NettyServerConfig();
         serverConfig.setListenPort(proxyPort);
@@ -83,9 +85,12 @@ public class NativeTlsIntegrationTest {
         serverConfig.setTlsKeyPath(KEY_PATH);
         proxyServer = new NettyRemotingServer(serverConfig);
         proxyServer.setClientConnectionManager(clientConnectionManager);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager, clientConnectionManager);
-        proxyServer.start();
         messageEngine.setRemotingServer(proxyServer);
+        heartbeatService.setRemotingServer(proxyServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
+        proxyServer.start();
         heartbeatService.start();
 
         NettyClientConfig tlsClientConfig = new NettyClientConfig();

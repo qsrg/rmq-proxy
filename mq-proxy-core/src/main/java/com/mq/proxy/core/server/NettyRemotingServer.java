@@ -196,6 +196,34 @@ public class NettyRemotingServer {
         this.processorTable.put(requestCode, processor);
     }
 
+    public RemotingCommand invokeSync(Channel channel, RemotingCommand request, long timeoutMillis) throws Exception {
+        if (channel == null || !channel.isActive()) {
+            throw new RuntimeException("channel is not active");
+        }
+        request.setOpaque(this.opaqueCounter.getAndIncrement());
+        ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis);
+        this.responseTable.put(request.getOpaque(), responseFuture);
+        try {
+            channel.writeAndFlush(request);
+            RemotingCommand response = responseFuture.waitResponse(timeoutMillis);
+            if (response == null) {
+                throw new RuntimeException("invokeSync timeout, timeoutMillis: " + timeoutMillis);
+            }
+            return response;
+        } finally {
+            this.responseTable.remove(request.getOpaque());
+        }
+    }
+
+    public void invokeOneway(Channel channel, RemotingCommand request, long timeoutMillis) throws Exception {
+        if (channel == null || !channel.isActive()) {
+            throw new RuntimeException("channel is not active");
+        }
+        request.markOnewayRPC();
+        request.setOpaque(this.opaqueCounter.getAndIncrement());
+        channel.writeAndFlush(request);
+    }
+
     class NettyServerHandler extends SimpleChannelInboundHandler<RemotingCommand> {
 
         @Override

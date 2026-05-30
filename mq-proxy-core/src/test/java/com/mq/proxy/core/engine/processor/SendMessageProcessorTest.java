@@ -280,4 +280,36 @@ public class SendMessageProcessorTest {
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, response.getCode());
     }
+
+    @Test
+    public void testProcessSendMessageWithSpecifiedQueueId() throws Exception {
+        when(mockAdapter.putMessage(any(InternalMessage.class), any())).thenReturn(PutResult.success("orderly-msg-1", 2, 400L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "orderlyProducerGroup");
+        extFields.put("topic", "OrderlyTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "2");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        extFields.put("reconsumeTimes", "0");
+        extFields.put("unitMode", "false");
+        extFields.put("batch", "false");
+        request.setExtFields(extFields);
+        request.setBody("orderly message".getBytes());
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        HashMap<String, String> respExtFields = response.getExtFields();
+        assertEquals("2", respExtFields.get("queueId"));
+
+        verify(mockAdapter).putMessage(argThat(msg ->
+                msg.getQueueId() != null && msg.getQueueId() == 2
+        ), any());
+    }
 }

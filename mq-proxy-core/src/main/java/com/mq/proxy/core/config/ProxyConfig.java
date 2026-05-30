@@ -1,7 +1,7 @@
 package com.mq.proxy.core.config;
 
 public class ProxyConfig {
-    private int listenPort = 10911;
+    private int listenPort = 19876;
     private String proxyHost;
     private String namesrvAddr = "127.0.0.1:9876";
     private int connectTimeoutMillis = 3000;

@@ -73,7 +73,7 @@ public class MockStorageAdapter implements StorageAdapter {
     }
 
     @Override
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) {
+    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) {
         ConcurrentHashMap<Integer, List<InternalMessage>> queueMap = topicQueueMessages.get(topic);
         if (queueMap == null) {
             return PullResult.notFound(queueOffset, 0, 0);

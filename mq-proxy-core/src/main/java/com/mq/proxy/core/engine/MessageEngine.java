@@ -17,9 +17,20 @@ public class MessageEngine {
     private final StorageAdapter storageAdapter;
     private VirtualRouteManager virtualRouteManager;
     private NettyRemotingServer remotingServer;
+    private Runnable onSubscriptionNotLatest;
 
     public MessageEngine(StorageAdapter storageAdapter) {
         this.storageAdapter = storageAdapter;
+    }
+
+    public void setOnSubscriptionNotLatest(Runnable onSubscriptionNotLatest) {
+        this.onSubscriptionNotLatest = onSubscriptionNotLatest;
+    }
+
+    public void triggerHeartbeatForward() {
+        if (onSubscriptionNotLatest != null) {
+            onSubscriptionNotLatest.run();
+        }
     }
 
     public void setVirtualRouteManager(VirtualRouteManager virtualRouteManager) {
@@ -43,10 +54,10 @@ public class MessageEngine {
         }
     }
 
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, long suspendTimeoutMillis, String subscription, String expressionType, String brokerName) {
+    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, String brokerName) {
         try {
             String brokerAddr = resolveBrokerAddr(brokerName, topic);
-            return storageAdapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, suspendTimeoutMillis, subscription, expressionType, brokerAddr);
+            return storageAdapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, brokerAddr);
         } catch (Exception e) {
             return PullResult.notFound(0, 0, 0);
         }
@@ -88,6 +99,13 @@ public class MessageEngine {
                         return realAddr;
                     }
                 }
+            }
+        }
+
+        if (virtualRouteManager != null) {
+            List<String> allBrokers = virtualRouteManager.getAllRealBrokerAddrs();
+            if (!allBrokers.isEmpty()) {
+                return allBrokers.get(0);
             }
         }
 

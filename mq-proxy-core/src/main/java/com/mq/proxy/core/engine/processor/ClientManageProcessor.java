@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.ClientConnectionManager;
+import com.mq.proxy.core.engine.UpstreamConsumerSessionManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
@@ -13,19 +14,35 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ClientManageProcessor implements RemotingProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ClientManageProcessor.class);
 
     private final ClientConnectionManager clientConnectionManager;
-    private final ConcurrentHashMap<String, Integer> consumerGroupMemberCount = new ConcurrentHashMap<>();
+    private UpstreamConsumerSessionManager upstreamConsumerSessionManager;
+    private Runnable onConsumerRegistered;
+    private final ExecutorService callbackExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "ClientManageCallback");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ClientManageProcessor(ClientConnectionManager clientConnectionManager) {
         this.clientConnectionManager = clientConnectionManager;
+    }
+
+    public void setOnConsumerRegistered(Runnable onConsumerRegistered) {
+        this.onConsumerRegistered = onConsumerRegistered;
+    }
+
+    public void setUpstreamConsumerSessionManager(UpstreamConsumerSessionManager upstreamConsumerSessionManager) {
+        this.upstreamConsumerSessionManager = upstreamConsumerSessionManager;
     }
 
     @Override
@@ -65,19 +82,20 @@ public class ClientManageProcessor implements RemotingProcessor {
                             consumerData.getMessageModel(),
                             consumerData.getConsumeFromWhere(),
                             consumerData.getSubscriptionDataSet());
+                    syncHeartbeatToBroker(clientID);
 
-                    boolean isBroadcast = "BROADCASTING".equals(consumerData.getMessageModel());
-                    if (!isBroadcast) {
-                        int prevCount = consumerGroupMemberCount.getOrDefault(group, 0);
-                        int currentCount = countGroupMembers(group);
-                        consumerGroupMemberCount.put(group, currentCount);
-                        if (prevCount == 0 || currentCount < prevCount) {
-                            log.info("Consumer group {} member count changed: {} -> {}, notifying all members",
-                                    group, prevCount, currentCount);
-                            notifyGroupMembers(group);
-                        }
-                    } else {
+                    if ("BROADCASTING".equals(consumerData.getMessageModel())) {
                         log.info("Consumer group {} is BROADCASTING mode, skip rebalance notification", group);
+                    }
+
+                    if (onConsumerRegistered != null) {
+                        callbackExecutor.submit(() -> {
+                            try {
+                                onConsumerRegistered.run();
+                            } catch (Exception e) {
+                                log.warn("Failed to trigger heartbeat forward after consumer registration: {}", e.getMessage());
+                            }
+                        });
                     }
                 }
             }
@@ -93,19 +111,11 @@ public class ClientManageProcessor implements RemotingProcessor {
         String consumerGroup = requestHeader.getConsumerGroup();
         boolean isBroadcast = consumerGroup != null && clientConnectionManager.isBroadcastGroup(consumerGroup);
 
-        clientConnectionManager.unregisterClient(channel, clientID,
+        ClientConnectionManager.ClientInfo clientInfo = clientConnectionManager.unregisterClient(channel, clientID,
                 requestHeader.getProducerGroup(), consumerGroup);
+        unregisterFromBroker(clientInfo);
 
-        if (consumerGroup != null && !isBroadcast) {
-            int prevCount = consumerGroupMemberCount.getOrDefault(consumerGroup, 0);
-            int currentCount = countGroupMembers(consumerGroup);
-            consumerGroupMemberCount.put(consumerGroup, currentCount);
-            if (currentCount != prevCount && currentCount > 0) {
-                log.info("Consumer group {} member count changed after unregister: {} -> {}, notifying remaining members",
-                        consumerGroup, prevCount, currentCount);
-                notifyGroupMembers(consumerGroup);
-            }
-        } else if (isBroadcast) {
+        if (isBroadcast) {
             log.info("Consumer group {} is BROADCASTING, skip notification after unregister", consumerGroup);
         }
 
@@ -119,13 +129,15 @@ public class ClientManageProcessor implements RemotingProcessor {
             consumerGroup = extFields.get("consumerGroup");
         }
 
-        java.util.List<String> consumerIdList = new java.util.ArrayList<>();
-        if (consumerGroup != null) {
-            for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
-                if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
-                    consumerIdList.add(clientInfo.getClientId());
-                }
+        List<String> consumerIdList;
+        if (upstreamConsumerSessionManager != null && consumerGroup != null) {
+            try {
+                consumerIdList = upstreamConsumerSessionManager.getConsumerListByGroup(consumerGroup);
+            } catch (Exception e) {
+                return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());
             }
+        } else {
+            consumerIdList = getLocalConsumerListByGroup(consumerGroup);
         }
 
         RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
@@ -191,14 +203,32 @@ public class ClientManageProcessor implements RemotingProcessor {
         return header;
     }
 
-    private int countGroupMembers(String consumerGroup) {
-        int count = 0;
-        for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
-            if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
-                count++;
+    private void syncHeartbeatToBroker(String clientId) {
+        if (upstreamConsumerSessionManager == null) {
+            return;
+        }
+        ClientConnectionManager.ClientInfo clientInfo = clientConnectionManager.getClientInfo(clientId);
+        if (clientInfo != null) {
+            upstreamConsumerSessionManager.syncHeartbeat(clientInfo);
+        }
+    }
+
+    private void unregisterFromBroker(ClientConnectionManager.ClientInfo clientInfo) {
+        if (upstreamConsumerSessionManager != null && clientInfo != null) {
+            upstreamConsumerSessionManager.unregisterClient(clientInfo);
+        }
+    }
+
+    private List<String> getLocalConsumerListByGroup(String consumerGroup) {
+        List<String> consumerIdList = new ArrayList<>();
+        if (consumerGroup != null) {
+            for (ClientConnectionManager.ClientInfo clientInfo : clientConnectionManager.getAllClientInfos()) {
+                if (clientInfo.getConsumerGroups().contains(consumerGroup)) {
+                    consumerIdList.add(clientInfo.getClientId());
+                }
             }
         }
-        return count;
+        return consumerIdList;
     }
 
     private void notifyGroupMembers(String consumerGroup) {

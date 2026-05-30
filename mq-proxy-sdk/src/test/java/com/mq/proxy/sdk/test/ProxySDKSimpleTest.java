@@ -17,7 +17,7 @@ public class ProxySDKSimpleTest {
         System.out.println();
 
         ProxyProducerConfig config = new ProxyProducerConfig();
-        config.setProxyAddrs("127.0.0.1:11911;127.0.0.1:11912;127.0.0.1:11913");
+        config.setProxyAddrs("127.0.0.1:19876;127.0.0.1:19877;127.0.0.1:19878");
         config.setFaultIsolationDurationMillis(30000);
 
         ProxyAddressManager manager = new ProxyAddressManager(config);

@@ -1,7 +1,7 @@
 package com.mq.proxy.core.server;
 
 public class NettyServerConfig {
-    private int listenPort = 10911;
+    private int listenPort = 19876;
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
     private int callbackExecutorThreadNums = 4;

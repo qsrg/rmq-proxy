@@ -50,13 +50,13 @@ public class ProxyConsumerTest {
     public void testSimplifiedAPI() {
         // 测试简化API（链式配置）
         ProxyConsumer consumer = new ProxyConsumer("GroupA")
-            .setProxyAddrs("127.0.0.1:10911")
+            .setProxyAddrs("127.0.0.1:19876")
             .setSuspendTimeoutMillis(15000)
             .setMessageModel("BROADCASTING");
 
         assertNotNull(consumer);
         assertEquals("GroupA", consumer.getConfig().getConsumerGroup());
-        assertEquals("127.0.0.1:10911", consumer.getConfig().getProxyAddrs());
+        assertEquals("127.0.0.1:19876", consumer.getConfig().getProxyAddrs());
         assertEquals(15000L, consumer.getConfig().getSuspendTimeoutMillis());
         assertEquals("BROADCASTING", consumer.getConfig().getMessageModel());
     }
@@ -122,6 +122,26 @@ public class ProxyConsumerTest {
         long offset = consumer.queryConsumerOffset("GroupA", "TestTopic", 0);
 
         assertEquals(500L, offset);
+    }
+
+    @Test
+    public void testPullWithCommitOffset() throws Exception {
+        byte[] body = new byte[]{1, 2, 3};
+        RemotingCommand pullResponse = buildPullSuccessResponse(101L, 0L, 200L, 0L, body);
+        when(mockFacade.invokeSync(any(RemotingCommand.class), anyLong())).thenReturn(pullResponse);
+
+        PullResult result = consumer.pull("OrderlyTopic", "GroupA", 2, 100L, 32, 100L);
+
+        assertTrue(result.isSuccess());
+        assertTrue(result.isFound());
+
+        ArgumentCaptor<RemotingCommand> requestCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockFacade).invokeSync(requestCaptor.capture(), anyLong());
+
+        RemotingCommand request = requestCaptor.getValue();
+        HashMap<String, String> extFields = request.getExtFields();
+        assertEquals("100", extFields.get("commitOffset"));
+        assertEquals("1", extFields.get("sysFlag"));
     }
 
     private RemotingCommand buildPullSuccessResponse(long nextBeginOffset, long minOffset,

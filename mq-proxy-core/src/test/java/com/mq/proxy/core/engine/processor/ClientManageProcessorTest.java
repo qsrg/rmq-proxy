@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.ClientConnectionManager;
+import com.mq.proxy.core.engine.UpstreamConsumerSessionManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
@@ -10,6 +11,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashSet;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.*;
@@ -20,11 +25,15 @@ public class ClientManageProcessorTest {
     private ClientConnectionManager clientConnectionManager;
     private ClientManageProcessor processor;
     private Channel mockChannel;
+    private RecordingUpstreamConsumerSessionManager upstreamSessionManager;
 
     @Before
     public void setUp() {
         clientConnectionManager = new ClientConnectionManager();
+        upstreamSessionManager = new RecordingUpstreamConsumerSessionManager();
+        clientConnectionManager.addClientInactiveListener(upstreamSessionManager::unregisterClient);
         processor = new ClientManageProcessor(clientConnectionManager);
+        processor.setUpstreamConsumerSessionManager(upstreamSessionManager);
         mockChannel = mock(Channel.class);
         when(mockChannel.isActive()).thenReturn(true);
         when(mockChannel.remoteAddress()).thenReturn(null);
@@ -58,6 +67,7 @@ public class ClientManageProcessorTest {
 
         assertTrue(clientConnectionManager.getAllProducerGroups().contains("producerGroup1"));
         assertTrue(clientConnectionManager.getAllConsumerGroups().contains("consumerGroup1"));
+        assertEquals(Collections.singletonList("client-001"), upstreamSessionManager.syncedClientIds);
     }
 
     @Test
@@ -83,6 +93,37 @@ public class ClientManageProcessorTest {
 
         assertFalse(clientConnectionManager.getAllProducerGroups().contains("producerGroup1"));
         assertFalse(clientConnectionManager.getAllConsumerGroups().contains("consumerGroup1"));
+        assertEquals(Collections.singletonList("client-001"), upstreamSessionManager.unregisteredClientIds);
+        assertEquals(Collections.singletonList("consumerGroup1"), upstreamSessionManager.unregisteredConsumerGroups);
+    }
+
+    @Test
+    public void testGetConsumerListByGroupUsesBrokerGlobalView() throws Exception {
+        upstreamSessionManager.consumerIds = Arrays.asList("client-001", "client-002");
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_CONSUMER_LIST_BY_GROUP, null);
+        java.util.HashMap<String, String> extFields = new java.util.HashMap<>();
+        extFields.put("consumerGroup", "consumerGroup1");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(mockChannel, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        String body = new String(response.getBody(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals("{\"consumerIdList\":[\"client-001\",\"client-002\"]}", body);
+        assertEquals("consumerGroup1", upstreamSessionManager.requestedConsumerGroup);
+    }
+
+    @Test
+    public void testChannelInactiveTriggersUpstreamUnregisterBeforeLocalStateIsLost() {
+        clientConnectionManager.registerConsumer(mockChannel, "client-001", "consumerGroup1",
+                null, null, null, null);
+
+        clientConnectionManager.onChannelInactive(mockChannel);
+
+        assertFalse(clientConnectionManager.hasAnyClients());
+        assertEquals(Collections.singletonList("client-001"), upstreamSessionManager.unregisteredClientIds);
     }
 
     @Test
@@ -144,5 +185,30 @@ public class ClientManageProcessorTest {
         processor.processRequest(channel2, request2);
 
         assertTrue(clientConnectionManager.getAllConsumerGroups().contains("groupA"));
+    }
+
+    private static class RecordingUpstreamConsumerSessionManager implements UpstreamConsumerSessionManager {
+        private final List<String> syncedClientIds = new ArrayList<>();
+        private final List<String> unregisteredClientIds = new ArrayList<>();
+        private final List<String> unregisteredConsumerGroups = new ArrayList<>();
+        private List<String> consumerIds = Collections.emptyList();
+        private String requestedConsumerGroup;
+
+        @Override
+        public void syncHeartbeat(ClientConnectionManager.ClientInfo clientInfo) {
+            syncedClientIds.add(clientInfo.getClientId());
+        }
+
+        @Override
+        public void unregisterClient(ClientConnectionManager.ClientInfo clientInfo) {
+            unregisteredClientIds.add(clientInfo.getClientId());
+            unregisteredConsumerGroups.addAll(clientInfo.getConsumerGroups());
+        }
+
+        @Override
+        public List<String> getConsumerListByGroup(String consumerGroup) {
+            requestedConsumerGroup = consumerGroup;
+            return consumerIds;
+        }
     }
 }

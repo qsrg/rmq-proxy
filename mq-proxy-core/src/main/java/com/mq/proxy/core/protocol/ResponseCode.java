@@ -11,5 +11,6 @@ public class ResponseCode {
     public static final int PULL_NOT_FOUND = 19;
     public static final int PULL_RETRY_IMMEDIATELY = 20;
     public static final int PULL_OFFSET_MOVED = 21;
-    public static final int FLOW_CONTROL = 215;
+    public static final int SUBSCRIPTION_NOT_EXIST = 24;
+    public static final int SUBSCRIPTION_NOT_LATEST = 25;
 }

@@ -17,7 +17,7 @@ public class ProxySDKConsumerQuickStart {
 
         // 创建Consumer（类似RocketMQ）
         ProxyConsumer consumer = new ProxyConsumer("ConsumerGroup")
-            .setProxyAddrs("127.0.0.1:11911")
+            .setProxyAddrs("127.0.0.1:19876")
             .setRetryTimes(3)
             .setEnableMetrics(true);
 

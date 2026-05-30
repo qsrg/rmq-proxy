@@ -20,7 +20,7 @@ public class ProxySDKProducerQuickStart {
 
         // 创建Producer（类似RocketMQ）
         ProxyProducer producer = new ProxyProducer("QuickStartProducerGroup")
-            .setProxyAddrs("127.0.0.1:11911")
+            .setProxyAddrs("127.0.0.1:19876")
             .setRetryTimes(3)
             .setRequestTimeoutMillis(3000)
             .setEnableMetrics(true)

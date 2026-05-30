@@ -22,7 +22,7 @@ public class RocketMQProducerQuickStart {
         DefaultMQProducer producer = new DefaultMQProducer("QuickStartProducerGroup");
 
         // Step 2: 设置 NameServer 地址为 Proxy 地址
-        producer.setNamesrvAddr("127.0.0.1:11911");  // 通过Proxy访问RocketMQ
+        producer.setNamesrvAddr("127.0.0.1:19876");  // 通过Proxy访问RocketMQ
 
         // 可选设置
         producer.setRetryTimesWhenSendFailed(3);  // 发送失败重试次数
@@ -83,7 +83,7 @@ public class RocketMQProducerQuickStart {
 
         } catch (MQClientException e) {
             System.out.println("✗ 客户端异常: " + e.getMessage());
-            System.out.println("提示：请确保Proxy服务已启动（127.0.0.1:11911）");
+            System.out.println("提示：请确保Proxy服务已启动（127.0.0.1:19876）");
             e.printStackTrace();
         } catch (Exception e) {
             System.out.println("✗ 发送异常: " + e.getMessage());
