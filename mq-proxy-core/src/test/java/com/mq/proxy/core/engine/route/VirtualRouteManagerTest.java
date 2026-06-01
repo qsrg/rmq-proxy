@@ -1,11 +1,21 @@
 package com.mq.proxy.core.engine.route;
 
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
+import com.mq.proxy.core.protocol.RemotingCommand;
+import com.mq.proxy.core.protocol.RemotingSysResponseCode;
+import com.mq.proxy.core.protocol.RequestCode;
+import com.mq.proxy.core.server.NettyClientConfig;
+import com.mq.proxy.core.server.NettyRemotingClient;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -140,5 +150,108 @@ public class VirtualRouteManagerTest {
 
         setProxyAddr("192.168.1.100:9090");
         assertEquals("192.168.1.100:9090", routeManager.getProxyAddr());
+    }
+
+    @Test
+    public void testDiscoverBrokersFallsBackToNextNameServer() {
+        RecordingNettyRemotingClient namesrvClient = new RecordingNettyRemotingClient();
+        namesrvClient.willThrow("171.31.208.1:9876", new RuntimeException("connect failed"));
+        namesrvClient.willReturn("171.31.208.2:9876",
+                createSuccessResponse(("{\"brokerAddrTable\":{\"broker-a\":{\"brokerAddrs\":{\"0\":\"192.168.1.1:10911\"}}}}")
+                        .getBytes(StandardCharsets.UTF_8)));
+
+        VirtualRouteManager manager = new VirtualRouteManager(namesrvClient);
+        manager.start("171.31.208.1:9876;171.31.208.2:9876", "127.0.0.1", 10911);
+
+        manager.discoverBrokers();
+
+        assertEquals("192.168.1.1:10911", manager.getRealBrokerAddr("broker-a"));
+        assertEquals(
+                Arrays.asList("171.31.208.1:9876", "171.31.208.2:9876"),
+                namesrvClient.getInvokedAddrs()
+        );
+    }
+
+    @Test
+    public void testGetRouteInfoByTopicFallsBackToNextNameServer() {
+        RecordingNettyRemotingClient namesrvClient = new RecordingNettyRemotingClient();
+        namesrvClient.willThrow("171.31.208.1:9876", new RuntimeException("connect failed"));
+
+        TopicRouteInfo realRoute = new TopicRouteInfo();
+        realRoute.setTopic("TestTopic");
+        TopicRouteInfo.QueueData queueData = new TopicRouteInfo.QueueData();
+        queueData.setBrokerName("broker-a");
+        queueData.setReadQueueNums(4);
+        queueData.setWriteQueueNums(4);
+        queueData.setPerm(6);
+        realRoute.setQueueDatas(Collections.singletonList(queueData));
+
+        TopicRouteInfo.BrokerData brokerData = new TopicRouteInfo.BrokerData();
+        brokerData.setBrokerName("broker-a");
+        Map<Long, String> brokerAddrs = new HashMap<>();
+        brokerAddrs.put(0L, "192.168.1.1:10911");
+        brokerData.setBrokerAddrs(brokerAddrs);
+        realRoute.setBrokerDatas(Collections.singletonList(brokerData));
+
+        namesrvClient.willReturn("171.31.208.2:9876",
+                createSuccessResponse(RouteInfoSerializer.encodeTopicRouteInfo(realRoute)));
+
+        VirtualRouteManager manager = new VirtualRouteManager(namesrvClient);
+        manager.start("171.31.208.1:9876;171.31.208.2:9876", "10.0.0.1", 8080);
+
+        TopicRouteInfo virtualRoute = manager.getRouteInfoByTopic("TestTopic");
+
+        assertNotNull(virtualRoute);
+        assertEquals("10.0.0.1:8080", virtualRoute.getBrokerDatas().get(0).getBrokerAddrs().get(0L));
+        assertEquals("192.168.1.1:10911", manager.getRealBrokerAddr("broker-a"));
+        assertEquals(
+                Arrays.asList("171.31.208.1:9876", "171.31.208.2:9876"),
+                namesrvClient.getInvokedAddrs()
+        );
+    }
+
+    private static RemotingCommand createSuccessResponse(byte[] body) {
+        RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+        response.setBody(body);
+        return response;
+    }
+
+    private static class RecordingNettyRemotingClient extends NettyRemotingClient {
+        private final List<String> invokedAddrs = new ArrayList<>();
+        private final Map<String, Deque<Object>> scriptedResults = new HashMap<>();
+
+        RecordingNettyRemotingClient() {
+            super(new NettyClientConfig());
+        }
+
+        void willReturn(String addr, RemotingCommand response) {
+            scriptedResults.computeIfAbsent(addr, key -> new ArrayDeque<>()).addLast(response);
+        }
+
+        void willThrow(String addr, RuntimeException exception) {
+            scriptedResults.computeIfAbsent(addr, key -> new ArrayDeque<>()).addLast(exception);
+        }
+
+        List<String> getInvokedAddrs() {
+            return invokedAddrs;
+        }
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        protected RemotingCommand invokeSyncSingle(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
+            invokedAddrs.add(addr);
+            Deque<Object> scripted = scriptedResults.get(addr);
+            if (scripted == null || scripted.isEmpty()) {
+                throw new AssertionError("No scripted result for addr " + addr + ", requestCode=" + request.getCode());
+            }
+            Object result = scripted.removeFirst();
+            if (result instanceof Exception) {
+                throw (Exception) result;
+            }
+            return (RemotingCommand) result;
+        }
     }
 }

@@ -26,10 +26,13 @@ import javax.net.ssl.SSLEngine;
 import java.io.FileInputStream;
 import java.io.InputStream;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
 
 public class NettyRemotingClient {
 
@@ -42,6 +45,7 @@ public class NettyRemotingClient {
     private final ConcurrentHashMap<String, Channel> channelTable = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, ResponseFuture> responseTable = new ConcurrentHashMap<>();
     private final AtomicInteger opaqueCounter = new AtomicInteger(0);
+    private final AtomicInteger addressSelector = new AtomicInteger(0);
     private ExecutorService callbackExecutor;
     private final ConcurrentHashMap<Integer, RemotingProcessor> processorTable = new ConcurrentHashMap<>();
 
@@ -141,9 +145,12 @@ public class NettyRemotingClient {
         if (channel != null && channel.isActive()) {
             return channel;
         }
-        String[] parts = addr.split(":");
-        String host = parts[0];
-        int port = Integer.parseInt(parts[1]);
+        int separator = addr.lastIndexOf(':');
+        if (separator <= 0 || separator == addr.length() - 1) {
+            throw new IllegalArgumentException("Invalid remote address: " + addr);
+        }
+        String host = addr.substring(0, separator);
+        int port = Integer.parseInt(addr.substring(separator + 1));
         ChannelFuture channelFuture = this.bootstrap.connect(host, port).sync();
         channel = channelFuture.channel();
         this.channelTable.put(addr, channel);
@@ -151,6 +158,37 @@ public class NettyRemotingClient {
     }
 
     public RemotingCommand invokeSync(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
+        List<String> targetAddrs = parseTargetAddrs(addr);
+        if (targetAddrs.isEmpty()) {
+            throw new IllegalArgumentException("addr is blank");
+        }
+        if (targetAddrs.size() == 1) {
+            return invokeSyncSingle(targetAddrs.get(0), request, timeoutMillis);
+        }
+
+        Exception lastException = null;
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        int startIndex = Math.floorMod(this.addressSelector.getAndIncrement(), targetAddrs.size());
+        for (int i = 0; i < targetAddrs.size(); i++) {
+            String targetAddr = targetAddrs.get((startIndex + i) % targetAddrs.size());
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                break;
+            }
+            try {
+                return invokeSyncSingle(targetAddr, request, remaining);
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("invokeSync failed for addr {}, trying next address if available: {}", targetAddr, e.getMessage());
+            }
+        }
+        if (lastException != null) {
+            throw lastException;
+        }
+        throw new RuntimeException("invokeSync timeout, addr: " + addr + ", timeoutMillis: " + timeoutMillis);
+    }
+
+    protected RemotingCommand invokeSyncSingle(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
         Channel channel = getAndCreateChannel(addr);
         if (channel == null || !channel.isActive()) {
             throw new RuntimeException("channel is not active, addr: " + addr);
@@ -171,12 +209,48 @@ public class NettyRemotingClient {
     }
 
     public void invokeOneway(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
+        List<String> targetAddrs = parseTargetAddrs(addr);
+        if (targetAddrs.isEmpty()) {
+            throw new IllegalArgumentException("addr is blank");
+        }
+        if (targetAddrs.size() == 1) {
+            invokeOnewaySingle(targetAddrs.get(0), request, timeoutMillis);
+            return;
+        }
+
+        Exception lastException = null;
+        int startIndex = Math.floorMod(this.addressSelector.getAndIncrement(), targetAddrs.size());
+        for (int i = 0; i < targetAddrs.size(); i++) {
+            String targetAddr = targetAddrs.get((startIndex + i) % targetAddrs.size());
+            try {
+                invokeOnewaySingle(targetAddr, request, timeoutMillis);
+                return;
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("invokeOneway failed for addr {}, trying next address if available: {}", targetAddr, e.getMessage());
+            }
+        }
+        if (lastException != null) {
+            throw lastException;
+        }
+        throw new RuntimeException("invokeOneway failed, addr: " + addr);
+    }
+
+    protected void invokeOnewaySingle(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
         Channel channel = getAndCreateChannel(addr);
         if (channel == null || !channel.isActive()) {
             throw new RuntimeException("channel is not active, addr: " + addr);
         }
         request.markOnewayRPC();
         channel.writeAndFlush(request);
+    }
+
+    public void setNamesrvAddr(String namesrvAddr) {
+        this.nettyClientConfig.setNamesrvAddr(namesrvAddr);
+    }
+
+    public String getNamesrvAddr() {
+        return this.nettyClientConfig.getNamesrvAddr();
     }
 
     public void registerProcessor(int requestCode, RemotingProcessor processor) {
@@ -210,5 +284,29 @@ public class NettyRemotingClient {
             log.error("NettyClientHandler exception", cause);
             ctx.close();
         }
+    }
+
+    private List<String> parseTargetAddrs(String addr) {
+        if (addr == null) {
+            return Collections.emptyList();
+        }
+
+        String trimmed = addr.trim();
+        if (trimmed.isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (trimmed.indexOf(';') < 0) {
+            return Collections.singletonList(trimmed);
+        }
+
+        String[] parts = trimmed.split(";");
+        List<String> addrs = new ArrayList<>(parts.length);
+        for (String part : parts) {
+            String candidate = part.trim();
+            if (!candidate.isEmpty()) {
+                addrs.add(candidate);
+            }
+        }
+        return addrs;
     }
 }

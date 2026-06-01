@@ -47,8 +47,7 @@ public class VirtualRouteManager {
     public void start(String namesrvAddr, String proxyHost, int proxyPort) {
         this.proxyAddr = proxyHost + ":" + proxyPort;
         this.namesrvAddr = namesrvAddr;
-        NettyClientConfig clientConfig = new NettyClientConfig();
-        clientConfig.setNamesrvAddr(namesrvAddr);
+        this.namesrvClient.setNamesrvAddr(namesrvAddr);
         this.namesrvClient.start();
         this.started = true;
     }
