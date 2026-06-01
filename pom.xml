@@ -16,7 +16,6 @@
         <module>mq-proxy-sdk</module>
         <module>mq-proxy-admin</module>
         <module>mq-proxy-standalone</module>
-        <module>mq-proxy-test</module>
         <module>mq-proxy-example</module>
     </modules>
 

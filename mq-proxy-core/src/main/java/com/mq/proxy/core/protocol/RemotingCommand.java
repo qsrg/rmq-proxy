@@ -21,7 +21,7 @@ public class RemotingCommand {
      * V3_1_8_SNAPSHOT. Default to the local 4.9.8 protocol version when the
      * environment does not override it explicitly.
      */
-    static final int DEFAULT_REMOTING_VERSION = 625;
+    static final int DEFAULT_REMOTING_VERSION = 409;
 
     private static final AtomicInteger requestId = new AtomicInteger(0);
     private static volatile int configVersion = -1;

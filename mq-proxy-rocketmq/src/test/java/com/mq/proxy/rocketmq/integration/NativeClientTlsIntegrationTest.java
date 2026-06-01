@@ -1,26 +1,12 @@
 package com.mq.proxy.rocketmq.integration;
 
-import com.mq.proxy.core.engine.ClientConnectionManager;
-import com.mq.proxy.core.engine.MessageEngine;
-import com.mq.proxy.core.engine.ProcessorRegister;
-import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
-import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
-import com.mq.proxy.core.server.NettyClientConfig;
-import com.mq.proxy.core.server.NettyRemotingClient;
-import com.mq.proxy.core.server.NettyRemotingServer;
-import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageConfig;
-import com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
-import java.net.ServerSocket;
 import java.util.HashMap;
 
 import static org.junit.Assert.*;
@@ -35,119 +21,25 @@ public class NativeClientTlsIntegrationTest {
     private static final String CERT_PATH = "/tmp/proxy-tls-server.crt";
     private static final String KEY_PATH = "/tmp/proxy-tls-server.key";
 
-    private NettyRemotingClient namesrvClient;
-    private String brokerAddr;
-    private NettyRemotingServer proxyServer;
-    private int proxyPort;
-    private StorageAdapter rocketmqAdapter;
-    private MessageEngine messageEngine;
-    private VirtualRouteManager virtualRouteManager;
-    private ClientConnectionManager clientConnectionManager;
-    private ProxyBrokerHeartbeatService heartbeatService;
-    private NettyRemotingClient tlsClient;
+    private EmbeddedTlsRocketMQProxy proxy;
 
     @Before
     public void setUp() throws Exception {
-        generateCertificates();
-
-        namesrvClient = new NettyRemotingClient(new NettyClientConfig());
-        namesrvClient.start();
-
-        brokerAddr = RocketMQIntegrationTest.discoverBrokerAddr(namesrvClient, NAMESRV_ADDR);
-        assertNotNull("Broker not found, is RocketMQ running on " + NAMESRV_ADDR + "?", brokerAddr);
-        System.out.println("Discovered Broker: " + brokerAddr);
-
-        proxyPort = findAvailablePort();
-
-        StorageConfig rocketmqConfig = new StorageConfig();
-        rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
-        rocketmqConfig.setConnectTimeoutMillis(5000);
-
-        rocketmqAdapter = new RocketMQStorageAdapter();
-        rocketmqAdapter.initialize(rocketmqConfig);
-
-        messageEngine = new MessageEngine(rocketmqAdapter);
-
-        virtualRouteManager = new VirtualRouteManager();
-        virtualRouteManager.start(NAMESRV_ADDR, "127.0.0.1", proxyPort);
-        messageEngine.setVirtualRouteManager(virtualRouteManager);
-
-        clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
-
-        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
-
-        NettyServerConfig serverConfig = new NettyServerConfig();
-        serverConfig.setListenPort(proxyPort);
-        serverConfig.setTlsEnabled(true);
-        serverConfig.setTlsCertPath(CERT_PATH);
-        serverConfig.setTlsKeyPath(KEY_PATH);
-
-        proxyServer = new NettyRemotingServer(serverConfig);
-        proxyServer.setClientConnectionManager(clientConnectionManager);
-        messageEngine.setRemotingServer(proxyServer);
-        heartbeatService.setRemotingServer(proxyServer);
-        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
-                clientConnectionManager, heartbeatService);
-        proxyServer.start();
-        heartbeatService.start();
-
-        NettyClientConfig tlsClientConfig = new NettyClientConfig();
-        tlsClientConfig.setTlsEnabled(true);
-        tlsClientConfig.setTlsTrustCertPath(CERT_PATH);
-        tlsClient = new NettyRemotingClient(tlsClientConfig);
-        tlsClient.start();
-
-        System.out.println("TLS Proxy started on 127.0.0.1:" + proxyPort);
+        proxy = new EmbeddedTlsRocketMQProxy(NAMESRV_ADDR, CERT_PATH, KEY_PATH);
+        proxy.start();
+        System.out.println("TLS Proxy started on " + proxy.getProxyAddr() + ", broker=" + proxy.getBrokerAddr());
     }
 
     @After
     public void tearDown() {
-        if (tlsClient != null) {
-            tlsClient.shutdown();
-        }
-        if (heartbeatService != null) {
-            heartbeatService.shutdown();
-        }
-        if (proxyServer != null) {
-            proxyServer.shutdown();
-        }
-        if (virtualRouteManager != null) {
-            virtualRouteManager.shutdown();
-        }
-        if (rocketmqAdapter != null) {
-            rocketmqAdapter.shutdown();
-        }
-        if (namesrvClient != null) {
-            namesrvClient.shutdown();
-        }
-        deleteFile(CERT_PATH);
-        deleteFile(KEY_PATH);
-    }
-
-    private void generateCertificates() throws Exception {
-        ProcessBuilder pb1 = new ProcessBuilder(
-                "openssl", "req", "-x509", "-newkey", "rsa:2048",
-                "-keyout", KEY_PATH, "-out", CERT_PATH, "-days", "1", "-nodes",
-                "-subj", "/CN=proxy-test/OU=test/O=test/L=test/ST=test/C=CN"
-        );
-        pb1.inheritIO();
-        Process p1 = pb1.start();
-        int code1 = p1.waitFor();
-        assertEquals("openssl cert generation failed", 0, code1);
-    }
-
-    private void deleteFile(String path) {
-        File file = new File(path);
-        if (file.exists()) {
-            file.delete();
+        if (proxy != null) {
+            proxy.shutdown();
         }
     }
 
     @Test
     public void testTlsProxyRouteInfo() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("topic", TOPIC);
@@ -156,7 +48,7 @@ public class NativeClientTlsIntegrationTest {
         request.setExtFields(extFields);
 
         System.out.println("Sending TLS route request to proxy at " + proxyAddr);
-        RemotingCommand response = tlsClient.invokeSync(proxyAddr, request, 5000);
+        RemotingCommand response = proxy.getTlsClient().invokeSync(proxyAddr, request, 5000);
 
         System.out.println("Route response code: " + response.getCode());
         System.out.println("Route response body: " + (response.getBody() != null ?
@@ -169,7 +61,7 @@ public class NativeClientTlsIntegrationTest {
 
     @Test
     public void testTlsProxySendMessage() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("a", PRODUCER_GROUP);
@@ -190,7 +82,7 @@ public class NativeClientTlsIntegrationTest {
         request.setBody("Hello from TLS client through proxy!".getBytes("UTF-8"));
 
         System.out.println("Sending TLS message to proxy at " + proxyAddr);
-        RemotingCommand response = tlsClient.invokeSync(proxyAddr, request, 10000);
+        RemotingCommand response = proxy.getTlsClient().invokeSync(proxyAddr, request, 10000);
 
         System.out.println("Send response: code=" + response.getCode() + ", remark=" + response.getRemark()
                 + ", extFields=" + response.getExtFields());
@@ -204,7 +96,7 @@ public class NativeClientTlsIntegrationTest {
 
     @Test
     public void testTlsProxyPullMessage() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> sendExtFields = new HashMap<>();
         sendExtFields.put("a", PRODUCER_GROUP);
@@ -224,7 +116,7 @@ public class NativeClientTlsIntegrationTest {
         sendRequest.setExtFields(sendExtFields);
         sendRequest.setBody("TLS pull test message".getBytes("UTF-8"));
 
-        RemotingCommand sendResponse = tlsClient.invokeSync(proxyAddr, sendRequest, 10000);
+        RemotingCommand sendResponse = proxy.getTlsClient().invokeSync(proxyAddr, sendRequest, 10000);
         assertEquals("Send should succeed before pull test", RemotingSysResponseCode.SUCCESS, sendResponse.getCode());
 
         int queueId = Integer.parseInt(sendResponse.getExtFields().get("queueId"));
@@ -248,7 +140,7 @@ public class NativeClientTlsIntegrationTest {
         pullRequest.setExtFields(pullExtFields);
 
         System.out.println("Sending TLS pull request to proxy at " + proxyAddr);
-        RemotingCommand pullResponse = tlsClient.invokeSync(proxyAddr, pullRequest, 10000);
+        RemotingCommand pullResponse = proxy.getTlsClient().invokeSync(proxyAddr, pullRequest, 10000);
 
         System.out.println("Pull response: code=" + pullResponse.getCode()
                 + ", bodyLen=" + (pullResponse.getBody() != null ? pullResponse.getBody().length : 0));
@@ -262,12 +154,5 @@ public class NativeClientTlsIntegrationTest {
             assertNotNull("Pull response extFields should not be null", pullResponse.getExtFields());
             assertNotNull("nextBeginOffset should not be null", pullResponse.getExtFields().get("nextBeginOffset"));
         }
-    }
-
-    private int findAvailablePort() throws Exception {
-        ServerSocket ss = new ServerSocket(0);
-        int port = ss.getLocalPort();
-        ss.close();
-        return port;
     }
 }

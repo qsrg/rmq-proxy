@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <parent>
+    <artifactId>mq-proxy-system</artifactId>
+    <groupId>com.mq.proxy</groupId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <modelVersion>4.0.0</modelVersion>
+  <artifactId>mq-proxy-standalone</artifactId>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.4.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <finalName>mq-proxy-${project.version}</finalName>
+              <outputDirectory>${project.build.directory}</outputDirectory>
+              <transformers>
+                <transformer>
+                  <mainClass>com.mq.proxy.core.ProxyStartup</mainClass>
+                </transformer>
+                <transformer>
+                  <resource>META-INF/services/io.netty.channel.ChannelHandler</resource>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>1.8</version>
+        <executions>
+          <execution>
+            <id>prepare-distribution</id>
+            <phase>package</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <mkdir />
+                <mkdir />
+                <mkdir />
+                <mkdir />
+                <copy />
+                <copy />
+                <copy />
+                <copy />
+                <tar>
+                  <tarfileset>
+                    <include />
+                    <exclude />
+                  </tarfileset>
+                  <tarfileset>
+                    <include />
+                  </tarfileset>
+                  <tarfileset>
+                    <include />
+                    <include />
+                    <include />
+                  </tarfileset>
+                </tar>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

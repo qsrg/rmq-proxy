@@ -63,6 +63,7 @@ public class PullMessageProcessor implements RemotingProcessor {
                 requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0,
                 requestHeader.getSubscription(),
                 requestHeader.getExpressionType(),
+                requestHeader.getSubVersion() != null ? requestHeader.getSubVersion() : 0L,
                 brokerName
         );
 

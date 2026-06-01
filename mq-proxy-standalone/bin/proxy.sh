@@ -2,12 +2,6 @@
 
 PROXY_HOME=$(cd "$(dirname "$0")/.." && pwd)
 CONF_DIR="${PROXY_HOME}/conf"
-LIB_DIR="${PROXY_HOME}/lib"
-
-CLASSPATH="${CONF_DIR}"
-for jar in "${LIB_DIR}"/*.jar; do
-    CLASSPATH="${CLASSPATH}:${jar}"
-done
 
 JAVA_OPT="${JAVA_OPT} -server"
 JAVA_OPT="${JAVA_OPT} -Xms512m -Xmx512m"
@@ -18,15 +12,23 @@ JAVA_OPT="${JAVA_OPT} -Dlogback.configurationFile=${CONF_DIR}/logback.xml"
 
 CONFIG_FILE="${CONF_DIR}/proxy.properties"
 
-if [ -f "${CONFIG_FILE}" ]; then
-    JAVA_OPT="${JAVA_OPT} -Dproxy.config.file=${CONFIG_FILE}"
+JAR_FILE=$(ls "${PROXY_HOME}"/mq-proxy-*.jar 2>/dev/null | head -1)
+if [ -z "${JAR_FILE}" ]; then
+    JAR_FILE=$(ls "${PROXY_HOME}"/lib/mq-proxy-standalone-*.jar 2>/dev/null | head -1)
 fi
 
-MAIN_CLASS="com.mq.proxy.core.ProxyStartup"
+if [ -z "${JAR_FILE}" ]; then
+    echo "Error: mq-proxy jar not found"
+    exit 1
+fi
 
 echo "Starting MQ Proxy..."
 echo "  PROXY_HOME: ${PROXY_HOME}"
 echo "  CONFIG: ${CONFIG_FILE}"
-echo "  CLASSPATH: ${CLASSPATH}"
+echo "  JAR: ${JAR_FILE}"
 
-java ${JAVA_OPT} -cp "${CLASSPATH}" ${MAIN_CLASS} -c "${CONFIG_FILE}"
+if [ -f "${CONFIG_FILE}" ]; then
+    java ${JAVA_OPT} -jar "${JAR_FILE}" -c "${CONFIG_FILE}"
+else
+    java ${JAVA_OPT} -jar "${JAR_FILE}"
+fi

@@ -14,10 +14,14 @@ import com.mq.proxy.core.storage.StorageConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.Enumeration;
+import java.util.Properties;
 
 public class ProxyStartup {
 
@@ -37,8 +41,10 @@ public class ProxyStartup {
         if (configFilePath != null) {
             proxyConfig = ProxyConfigLoader.loadFromFile(configFilePath);
         } else {
-            proxyConfig = ProxyConfigLoader.loadDefault();
+            proxyConfig = loadFromClasspath();
         }
+
+        overrideFromSystemProperties(proxyConfig);
 
         log.info("Proxy starting with config: listenPort={}, proxyHost={}, namesrvAddr={}",
                 proxyConfig.getListenPort(), proxyConfig.getProxyHost(), proxyConfig.getNamesrvAddr());
@@ -127,6 +133,49 @@ public class ProxyStartup {
             return adapter;
         } catch (Exception e) {
             throw new RuntimeException("Failed to create StorageAdapter: " + ROCKETMQ_STORAGE_ADAPTER, e);
+        }
+    }
+
+    private static ProxyConfig loadFromClasspath() {
+        String externalConfig = System.getProperty("proxy.config.file");
+        if (externalConfig != null) {
+            File file = new File(externalConfig);
+            if (file.exists()) {
+                log.info("Loading config from system property proxy.config.file: {}", externalConfig);
+                return ProxyConfigLoader.loadFromFile(externalConfig);
+            }
+        }
+
+        try (InputStream is = ProxyStartup.class.getClassLoader().getResourceAsStream("proxy.properties")) {
+            if (is != null) {
+                log.info("Loading config from classpath: proxy.properties");
+                Properties props = new Properties();
+                props.load(is);
+                return ProxyConfigLoader.loadFromProperties(props);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load config from classpath: {}", e.getMessage());
+        }
+
+        log.info("No config file found, using defaults");
+        return ProxyConfigLoader.loadDefault();
+    }
+
+    private static void overrideFromSystemProperties(ProxyConfig config) {
+        String namesrvAddr = System.getProperty("proxy.namesrvAddr");
+        if (namesrvAddr != null && !namesrvAddr.isEmpty()) {
+            config.setNamesrvAddr(namesrvAddr);
+            log.info("Override namesrvAddr from system property: {}", namesrvAddr);
+        }
+        String listenPort = System.getProperty("proxy.listenPort");
+        if (listenPort != null && !listenPort.isEmpty()) {
+            config.setListenPort(Integer.parseInt(listenPort));
+            log.info("Override listenPort from system property: {}", listenPort);
+        }
+        String proxyHost = System.getProperty("proxy.host");
+        if (proxyHost != null && !proxyHost.isEmpty()) {
+            config.setProxyHost(proxyHost);
+            log.info("Override proxyHost from system property: {}", proxyHost);
         }
     }
 

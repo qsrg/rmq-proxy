@@ -15,6 +15,7 @@ import com.mq.proxy.sdk.consumer.model.MessageQueue;
 import com.mq.proxy.sdk.consumer.model.ProxyMessage;
 import com.mq.proxy.sdk.exception.ProxyException;
 
+import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +26,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -144,6 +146,8 @@ public class ProxyLitePullConsumer {
             .setMessageModel(config.getMessageModel())
             .setRequestTimeoutMillis(config.getRequestTimeoutMillis())
             .setRetryTimes(config.getRetryTimes());
+        pullConsumer.getConfig().setConsumeType("CONSUME_PASSIVELY");
+        pullConsumer.setConsumerRunningInfoProvider(this::snapshotProcessQueueTable);
 
         rebalanceExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "Rebalance-" + config.getConsumerGroup());
@@ -560,5 +564,26 @@ public class ProxyLitePullConsumer {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    private TreeMap<org.apache.rocketmq.common.message.MessageQueue, ProcessQueueInfo> snapshotProcessQueueTable() {
+        TreeMap<org.apache.rocketmq.common.message.MessageQueue, ProcessQueueInfo> mqTable = new TreeMap<>();
+        long now = System.currentTimeMillis();
+        synchronized (assignedQueues) {
+            for (MessageQueue sdkMq : assignedQueues) {
+                org.apache.rocketmq.common.message.MessageQueue mq =
+                    new org.apache.rocketmq.common.message.MessageQueue(
+                        sdkMq.getTopic(), sdkMq.getBrokerName(), sdkMq.getQueueId());
+                ProcessQueueInfo processQueueInfo = new ProcessQueueInfo();
+                processQueueInfo.setCommitOffset(consumeOffsetTable.getOrDefault(sdkMq,
+                    pullOffsetTable.getOrDefault(sdkMq, 0L)));
+                processQueueInfo.setLocked(true);
+                processQueueInfo.setLastLockTimestamp(now);
+                processQueueInfo.setLastPullTimestamp(now);
+                processQueueInfo.setLastConsumeTimestamp(now);
+                mqTable.put(mq, processQueueInfo);
+            }
+        }
+        return mqTable;
     }
 }

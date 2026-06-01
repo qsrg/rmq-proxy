@@ -18,16 +18,15 @@ import com.mq.proxy.core.storage.model.OffsetResult;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class RocketMQStorageAdapter implements StorageAdapter {
-
-    private static final Logger log = LoggerFactory.getLogger(RocketMQStorageAdapter.class);
 
     private NettyRemotingClient remotingClient;
     private StorageConfig storageConfig;
     private volatile boolean initialized = false;
+
+    private static final int FLAG_SUSPEND = 0x1 << 0;
+    private static final int FLAG_COMMIT_OFFSET = 0x1 << 1;
+    private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
 
     @Override
     public void initialize(StorageConfig config) throws Exception {
@@ -86,21 +85,28 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     }
 
     @Override
-    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, String brokerAddr) throws Exception {
+    public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerAddr) throws Exception {
         PullMessageRequestHeader header = new PullMessageRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
         header.setQueueId(queueId);
         header.setQueueOffset(queueOffset);
         header.setMaxMsgNums(maxMsgNums);
-        header.setSysFlag(sysFlag);
-        header.setCommitOffset(commitOffset);
-        header.setSuspendTimeoutMillis(suspendTimeoutMillis);
 
         String subExpr = subscription != null && !subscription.isEmpty() ? subscription : "*";
         String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
+
+        int finalSysFlag = sysFlag;
+        if (suspendTimeoutMillis > 0) {
+            finalSysFlag |= FLAG_SUSPEND;
+        }
+        finalSysFlag |= FLAG_SUBSCRIPTION;
+        header.setSysFlag(finalSysFlag);
+
+        header.setCommitOffset(commitOffset);
+        header.setSuspendTimeoutMillis(suspendTimeoutMillis);
         header.setSubscription(subExpr);
-        header.setSubVersion(System.currentTimeMillis());
+        header.setSubVersion(subVersion);
         header.setExpressionType(exprType);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
@@ -115,12 +121,6 @@ public class RocketMQStorageAdapter implements StorageAdapter {
                 ? Long.parseLong(response.getExtFields().get("minOffset")) : 0L;
         long maxOffset = response.getExtFields() != null && response.getExtFields().get("maxOffset") != null
                 ? Long.parseLong(response.getExtFields().get("maxOffset")) : 0L;
-
-        log.info("BROKER_PULL_RESPONSE: group={}, topic={}, queueId={}, offset={}, brokerCode={}, remark={}, nextBeginOffset={}, minOffset={}, maxOffset={}, hasBody={}",
-                consumerGroup, topic, queueId, queueOffset,
-                response.getCode(), response.getRemark(),
-                nextBeginOffset, minOffset, maxOffset,
-                response.getBody() != null && response.getBody().length > 0);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             return PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);

@@ -169,7 +169,7 @@ public class ClientConnectionManager {
                         HeartbeatData.SubscriptionData newSub = new HeartbeatData.SubscriptionData();
                         newSub.setTopic(sub.getTopic());
                         newSub.setSubString(sub.getSubString());
-                        newSub.setSubVersion(Long.MAX_VALUE);
+                        newSub.setSubVersion(sub.getSubVersion());
                         newSub.setClassFilterMode(sub.isClassFilterMode());
                         newSub.setExpressionType(sub.getExpressionType());
                         populateTagsAndCodes(newSub, sub.getSubString());

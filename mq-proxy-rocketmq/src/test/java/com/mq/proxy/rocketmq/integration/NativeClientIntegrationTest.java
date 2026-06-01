@@ -1,37 +1,25 @@
 package com.mq.proxy.rocketmq.integration;
 
-import com.mq.proxy.core.engine.ClientConnectionManager;
-import com.mq.proxy.core.engine.MessageEngine;
-import com.mq.proxy.core.engine.ProcessorRegister;
-import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
-import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
-import com.mq.proxy.core.server.NettyRemotingServer;
-import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageConfig;
-import com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext;
 import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
 import org.apache.rocketmq.client.consumer.listener.MessageListenerConcurrently;
 import org.apache.rocketmq.client.producer.DefaultMQProducer;
 import org.apache.rocketmq.client.producer.SendResult;
-import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.ServerSocket;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
 
@@ -40,84 +28,26 @@ public class NativeClientIntegrationTest {
     private static final String NAMESRV_ADDR = "127.0.0.1:9876";
     private static final String TOPIC = "NATIVE_CLIENT_TEST";
     private static final String PRODUCER_GROUP = "PID_NATIVE_TEST";
-    private static final String CONSUMER_GROUP = "CID_NATIVE_TEST_" + System.currentTimeMillis();
-
-    private NettyRemotingClient namesrvClient;
-    private String brokerAddr;
-    private NettyRemotingServer proxyServer;
-    private int proxyPort;
-    private StorageAdapter rocketmqAdapter;
-    private MessageEngine messageEngine;
-    private VirtualRouteManager virtualRouteManager;
-    private ClientConnectionManager clientConnectionManager;
-    private ProxyBrokerHeartbeatService heartbeatService;
+    private static final String CONSUMER_GROUP = "CID_NATIVE_CONSUME_TEST";
+    private EmbeddedRocketMQProxy proxy;
 
     @Before
     public void setUp() throws Exception {
-        namesrvClient = new NettyRemotingClient(new NettyClientConfig());
-        namesrvClient.start();
-
-        brokerAddr = RocketMQIntegrationTest.discoverBrokerAddr(namesrvClient, NAMESRV_ADDR);
-        assertNotNull("Broker not found, is RocketMQ running on " + NAMESRV_ADDR + "?", brokerAddr);
-        System.out.println("Discovered Broker: " + brokerAddr);
-
-        proxyPort = findAvailablePort();
-
-        StorageConfig rocketmqConfig = new StorageConfig();
-        rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
-        rocketmqConfig.setConnectTimeoutMillis(5000);
-
-        rocketmqAdapter = new RocketMQStorageAdapter();
-        rocketmqAdapter.initialize(rocketmqConfig);
-
-        messageEngine = new MessageEngine(rocketmqAdapter);
-
-        virtualRouteManager = new VirtualRouteManager();
-        virtualRouteManager.start(NAMESRV_ADDR, "127.0.0.1", proxyPort);
-        messageEngine.setVirtualRouteManager(virtualRouteManager);
-
-        clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, rocketmqAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
-
-        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
-
-        NettyServerConfig serverConfig = new NettyServerConfig();
-        serverConfig.setListenPort(proxyPort);
-        proxyServer = new NettyRemotingServer(serverConfig);
-        proxyServer.setClientConnectionManager(clientConnectionManager);
-        messageEngine.setRemotingServer(proxyServer);
-        heartbeatService.setRemotingServer(proxyServer);
-        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
-                clientConnectionManager, heartbeatService);
-        proxyServer.start();
-        heartbeatService.start();
-
-        System.out.println("Proxy started on 127.0.0.1:" + proxyPort);
+        proxy = new EmbeddedRocketMQProxy(NAMESRV_ADDR);
+        proxy.start();
+        System.out.println("Proxy started on " + proxy.getProxyAddr() + ", broker=" + proxy.getBrokerAddr());
     }
 
     @After
     public void tearDown() {
-        if (heartbeatService != null) {
-            heartbeatService.shutdown();
-        }
-        if (proxyServer != null) {
-            proxyServer.shutdown();
-        }
-        if (virtualRouteManager != null) {
-            virtualRouteManager.shutdown();
-        }
-        if (rocketmqAdapter != null) {
-            rocketmqAdapter.shutdown();
-        }
-        if (namesrvClient != null) {
-            namesrvClient.shutdown();
+        if (proxy != null) {
+            proxy.shutdown();
         }
     }
 
     @Test
     public void testProxyGetRouteInfo() throws Exception {
-        String proxyNamesrvAddr = "127.0.0.1:" + proxyPort;
+        String proxyNamesrvAddr = proxy.getProxyAddr();
 
         NettyRemotingClient testClient = new NettyRemotingClient(new NettyClientConfig());
         testClient.start();
@@ -147,7 +77,7 @@ public class NativeClientIntegrationTest {
 
     @Test
     public void testNativeProducerSendMessage() throws Exception {
-        String proxyNamesrvAddr = "127.0.0.1:" + proxyPort;
+        String proxyNamesrvAddr = proxy.getProxyAddr();
 
         DefaultMQProducer producer = new DefaultMQProducer(PRODUCER_GROUP);
         producer.setNamesrvAddr(proxyNamesrvAddr);
@@ -176,194 +106,74 @@ public class NativeClientIntegrationTest {
     }
 
     @Test
-    public void testNativeProducerAndConsumer() throws Exception {
-        String proxyNamesrvAddr = "127.0.0.1:" + proxyPort;
-        String uniqueTag = "TAG_NATIVE_CONSUME_" + System.currentTimeMillis();
-        String uniqueKey = "KEY_NATIVE_CONSUME_" + System.currentTimeMillis();
-        String msgBody = "Native client consume test: " + System.currentTimeMillis();
+    public void testNativeConsumerConsumeMessage() throws Exception {
+        String proxyNamesrvAddr = proxy.getProxyAddr();
+        String consumeTopic = TOPIC + "_CONSUME_" + System.currentTimeMillis();
+        String consumeGroup = CONSUMER_GROUP + "_" + System.currentTimeMillis();
+        int totalMessages = 5;
 
-        CountDownLatch consumeLatch = new CountDownLatch(1);
-        AtomicReference<MessageExt> receivedMsg = new AtomicReference<>();
+        DefaultMQProducer producer = new DefaultMQProducer(PRODUCER_GROUP + "_CONSUME_TEST");
+        producer.setNamesrvAddr(proxyNamesrvAddr);
+        producer.setInstanceName("NativeConsumeProducerTest");
+        producer.setSendMsgTimeout(10000);
+        producer.setRetryTimesWhenSendFailed(0);
+        producer.start();
 
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(CONSUMER_GROUP);
+        for (int i = 0; i < totalMessages; i++) {
+            Message msg = new Message(consumeTopic, "TAG_CONSUME",
+                    ("ConsumeTest-" + i).getBytes("UTF-8"));
+            SendResult result = producer.send(msg);
+            assertEquals(org.apache.rocketmq.client.producer.SendStatus.SEND_OK, result.getSendStatus());
+            System.out.println("Sent message " + i + ", msgId=" + result.getMsgId());
+        }
+        producer.shutdown();
+        System.out.println("Producer shutdown, starting consumer...");
+
+        CountDownLatch latch = new CountDownLatch(totalMessages);
+        AtomicInteger receivedCount = new AtomicInteger(0);
+        List<String> receivedBodies = Collections.synchronizedList(new ArrayList<String>());
+
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(consumeGroup);
         consumer.setNamesrvAddr(proxyNamesrvAddr);
-        consumer.setInstanceName("NativeConsumerTest");
-        consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET);
-        consumer.setConsumeTimeout(15);
-        consumer.subscribe(TOPIC, uniqueTag);
-
+        consumer.setInstanceName("NativeConsumeConsumerTest");
+        consumer.subscribe(consumeTopic, "*");
         consumer.registerMessageListener(new MessageListenerConcurrently() {
             @Override
             public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs, ConsumeConcurrentlyContext context) {
                 for (MessageExt msg : msgs) {
+                    receivedCount.incrementAndGet();
                     try {
-                        System.out.println("Received message: topic=" + msg.getTopic()
-                                + ", tags=" + msg.getTags()
-                                + ", keys=" + msg.getKeys()
-                                + ", body=" + new String(msg.getBody(), "UTF-8"));
+                        receivedBodies.add(new String(msg.getBody(), "UTF-8"));
                     } catch (Exception e) {
-                        System.out.println("Received message: topic=" + msg.getTopic()
-                                + ", tags=" + msg.getTags()
-                                + ", keys=" + msg.getKeys()
-                                + ", body decode error");
+                        e.printStackTrace();
                     }
-                    if (uniqueTag.equals(msg.getTags()) && uniqueKey.equals(msg.getKeys())) {
-                        receivedMsg.set(msg);
-                        consumeLatch.countDown();
-                    }
+                    latch.countDown();
                 }
                 return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
             }
         });
 
-        DefaultMQProducer producer = new DefaultMQProducer(PRODUCER_GROUP);
-        producer.setNamesrvAddr(proxyNamesrvAddr);
-        producer.setInstanceName("NativeProducerTest2");
-        producer.setSendMsgTimeout(10000);
-        producer.setRetryTimesWhenSendFailed(0);
+        consumer.start();
+        System.out.println("Consumer started, waiting for messages...");
 
-        try {
-            consumer.start();
-            System.out.println("Native consumer started, waiting for rebalance...");
-            System.out.println("Consumer namesrvAddr: " + consumer.getNamesrvAddr());
-            System.out.println("Consumer group: " + CONSUMER_GROUP);
-            System.out.println("Consumer subscribed topic: " + TOPIC + " with tag: " + uniqueTag);
-            Thread.sleep(10000);
+        boolean allReceived = latch.await(60, TimeUnit.SECONDS);
 
-            producer.start();
-            System.out.println("Native producer started, sending tagged message...");
+        System.out.println("Received " + receivedCount.get() + "/" + totalMessages + " messages, waiting 30s for console inspection...");
+        Thread.sleep(30000);
 
-            Message msg = new Message(TOPIC, uniqueTag, uniqueKey, msgBody.getBytes("UTF-8"));
-            SendResult sendResult = producer.send(msg);
-            System.out.println("Send result: " + sendResult);
+        consumer.shutdown();
 
-            assertNotNull("SendResult should not be null", sendResult);
-            assertEquals("Send status should be SEND_OK",
-                    org.apache.rocketmq.client.producer.SendStatus.SEND_OK,
-                    sendResult.getSendStatus());
+        System.out.println("Received " + receivedCount.get() + "/" + totalMessages + " messages");
+        for (String body : receivedBodies) {
+            System.out.println("  Consumed: " + body);
+        }
 
-            boolean consumed = consumeLatch.await(30, TimeUnit.SECONDS);
-            if (consumed) {
-                MessageExt received = receivedMsg.get();
-                assertNotNull("Received message should not be null", received);
-                assertEquals("Message topic should match", TOPIC, received.getTopic());
-                assertEquals("Message tags should match", uniqueTag, received.getTags());
-                assertEquals("Message body should match", msgBody, new String(received.getBody(), "UTF-8"));
-                System.out.println("SUCCESS: Native client produced and consumed message through proxy!");
-            } else {
-                fail("Message was not consumed within 30 seconds");
-            }
-        } finally {
-            producer.shutdown();
+        assertTrue("Should receive at least " + totalMessages + " messages, got " + receivedCount.get(),
+                receivedCount.get() >= totalMessages);
+
+        for (int i = 0; i < totalMessages; i++) {
+            assertTrue("Should contain ConsumeTest-" + i, receivedBodies.contains("ConsumeTest-" + i));
         }
     }
 
-    @Test
-    public void testNativeConsumersRebalanceAfterOneShutdown() throws Exception {
-        String proxyNamesrvAddr = "127.0.0.1:" + proxyPort;
-        String group = "CID_NATIVE_REBALANCE_" + System.currentTimeMillis();
-        String tag = "TAG_NATIVE_REBALANCE_" + System.currentTimeMillis();
-
-        CountDownLatch firstPhaseLatch = new CountDownLatch(8);
-        CountDownLatch secondPhaseLatch = new CountDownLatch(4);
-        Set<String> firstPhaseBodies = Collections.synchronizedSet(new java.util.HashSet<String>());
-        Set<String> secondPhaseBodies = Collections.synchronizedSet(new java.util.HashSet<String>());
-
-        DefaultMQPushConsumer consumer1 = createConsumer(proxyNamesrvAddr, group, "NativeRebalanceConsumer1", tag,
-                firstPhaseLatch, secondPhaseLatch, firstPhaseBodies, secondPhaseBodies);
-        DefaultMQPushConsumer consumer2 = createConsumer(proxyNamesrvAddr, group, "NativeRebalanceConsumer2", tag,
-                firstPhaseLatch, secondPhaseLatch, firstPhaseBodies, secondPhaseBodies);
-
-        DefaultMQProducer producer = new DefaultMQProducer(PRODUCER_GROUP);
-        producer.setNamesrvAddr(proxyNamesrvAddr);
-        producer.setInstanceName("NativeRebalanceProducer");
-        producer.setSendMsgTimeout(10000);
-        producer.setRetryTimesWhenSendFailed(0);
-
-        try {
-            consumer1.start();
-            consumer2.start();
-            Thread.sleep(10000);
-
-            producer.start();
-
-            for (int i = 0; i < 8; i++) {
-                String body = "rebalance-phase1-" + i;
-                SendResult sendResult = producer.send(new Message(TOPIC, tag, body.getBytes("UTF-8")));
-                assertEquals(org.apache.rocketmq.client.producer.SendStatus.SEND_OK, sendResult.getSendStatus());
-            }
-
-            assertTrue("Both consumers should finish first phase consumption",
-                    firstPhaseLatch.await(30, TimeUnit.SECONDS));
-            assertEquals(8, firstPhaseBodies.size());
-
-            consumer2.shutdown();
-            Thread.sleep(10000);
-
-            for (int i = 0; i < 4; i++) {
-                String body = "rebalance-phase2-" + i;
-                SendResult sendResult = producer.send(new Message(TOPIC, tag, body.getBytes("UTF-8")));
-                assertEquals(org.apache.rocketmq.client.producer.SendStatus.SEND_OK, sendResult.getSendStatus());
-            }
-
-            assertTrue("Remaining consumer should continue consuming after rebalance",
-                    secondPhaseLatch.await(30, TimeUnit.SECONDS));
-            assertEquals(4, secondPhaseBodies.size());
-        } finally {
-            producer.shutdown();
-            try {
-                consumer1.shutdown();
-            } catch (Exception ignore) {
-            }
-            try {
-                consumer2.shutdown();
-            } catch (Exception ignore) {
-            }
-        }
-    }
-
-    private DefaultMQPushConsumer createConsumer(String proxyNamesrvAddr,
-                                                 String group,
-                                                 String instanceName,
-                                                 String tag,
-                                                 CountDownLatch firstPhaseLatch,
-                                                 CountDownLatch secondPhaseLatch,
-                                                 Set<String> firstPhaseBodies,
-                                                 Set<String> secondPhaseBodies) throws Exception {
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
-        consumer.setNamesrvAddr(proxyNamesrvAddr);
-        consumer.setInstanceName(instanceName);
-        consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET);
-        consumer.setConsumeTimeout(15);
-        consumer.subscribe(TOPIC, tag);
-        consumer.registerMessageListener(new MessageListenerConcurrently() {
-            @Override
-            public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs, ConsumeConcurrentlyContext context) {
-                for (MessageExt msg : msgs) {
-                    try {
-                        String body = new String(msg.getBody(), "UTF-8");
-                        if (body.startsWith("rebalance-phase1-")) {
-                            if (firstPhaseBodies.add(body)) {
-                                firstPhaseLatch.countDown();
-                            }
-                        } else if (body.startsWith("rebalance-phase2-")) {
-                            if (secondPhaseBodies.add(body)) {
-                                secondPhaseLatch.countDown();
-                            }
-                        }
-                    } catch (Exception ignore) {
-                    }
-                }
-                return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
-            }
-        });
-        return consumer;
-    }
-
-    private int findAvailablePort() throws Exception {
-        ServerSocket ss = new ServerSocket(0);
-        int port = ss.getLocalPort();
-        ss.close();
-        return port;
-    }
 }

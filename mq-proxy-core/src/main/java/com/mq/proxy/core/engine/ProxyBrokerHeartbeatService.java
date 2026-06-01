@@ -150,14 +150,17 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     private void sendHeartbeatToAllBrokers() {
         List<String> brokerAddrs = resolveBrokerAddrs();
         if (brokerAddrs.isEmpty()) {
-            log.debug("No real broker addresses available, skipping heartbeat to broker");
+            log.info("No real broker addresses available, skipping heartbeat to broker");
             return;
         }
 
         List<ClientConnectionManager.ClientInfo> clientInfos = clientConnectionManager.getAllClientInfos();
         if (clientInfos.isEmpty()) {
+            log.info("No active clients, skipping heartbeat to broker");
             return;
         }
+
+        log.info("Sending heartbeat to brokers {} for {} clients", brokerAddrs, clientInfos.size());
 
         for (ClientConnectionManager.ClientInfo clientInfo : clientInfos) {
             sendHeartbeatForClient(clientInfo, brokerAddrs);
@@ -176,8 +179,12 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
 
     private void sendHeartbeatForClient(ClientConnectionManager.ClientInfo clientInfo, List<String> brokerAddrs) {
         String clientId = clientInfo.getClientId();
+        log.info("sendHeartbeatForClient: clientId={}, consumerGroups={}, producerGroups={}",
+                clientId, clientInfo.getConsumerGroups(), clientInfo.getProducerGroups());
         HeartbeatData heartbeatData = buildHeartbeatDataForClient(clientInfo);
         if (heartbeatData == null) {
+            log.warn("sendHeartbeatForClient: heartbeatData is NULL for clientId={}, consumerGroups={}, producerGroups={}",
+                    clientId, clientInfo.getConsumerGroups(), clientInfo.getProducerGroups());
             return;
         }
 
@@ -196,14 +203,15 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
                 }
                 RemotingCommand response = client.invokeSync(brokerAddr, request, 5000);
                 if (response != null && response.getCode() == RemotingSysResponseCode.SUCCESS) {
-                    log.debug("Proxy heartbeat to broker {} for client {} success, consumerGroups={}",
-                            brokerAddr, clientId, heartbeatData.getConsumerDataSet().size());
+                    log.info("Proxy heartbeat to broker {} for client {} SUCCESS, consumerGroups={}, producerGroups={}",
+                            brokerAddr, clientId, heartbeatData.getConsumerDataSet().size(), heartbeatData.getProducerDataSet().size());
                 } else {
-                    log.warn("Proxy heartbeat to broker {} for client {} failed, responseCode={}",
-                            brokerAddr, clientId, response != null ? response.getCode() : "null");
+                    log.warn("Proxy heartbeat to broker {} for client {} FAILED, responseCode={}, remark={}",
+                            brokerAddr, clientId, response != null ? response.getCode() : "null",
+                            response != null ? response.getRemark() : "null");
                 }
             } catch (Exception e) {
-                log.warn("Proxy heartbeat to broker {} for client {} exception: {}", brokerAddr, clientId, e.getMessage());
+                log.warn("Proxy heartbeat to broker {} for client {} exception: {}", brokerAddr, clientId, e.getMessage(), e);
             }
         }
     }
@@ -287,9 +295,9 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
                     HeartbeatData.SubscriptionData newSub = new HeartbeatData.SubscriptionData();
                     newSub.setTopic(sub.getTopic());
                     newSub.setSubString(sub.getSubString());
-                    newSub.setSubVersion(Long.MAX_VALUE);
+                    newSub.setSubVersion(sub.getSubVersion());
                     newSub.setClassFilterMode(sub.isClassFilterMode());
-                    newSub.setExpressionType(sub.getExpressionType());
+                    newSub.setExpressionType(sub.getExpressionType() != null ? sub.getExpressionType() : "TAG");
                     populateTagsAndCodes(newSub, sub.getSubString());
                     newSubs.add(newSub);
                 }

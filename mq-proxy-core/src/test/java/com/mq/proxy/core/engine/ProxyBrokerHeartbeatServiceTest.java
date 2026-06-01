@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -96,6 +97,50 @@ public class ProxyBrokerHeartbeatServiceTest {
 
         assertTrue(service.clientPool().containsKey("client-001"));
         assertTrue(service.clientPool().containsKey("__proxy_shared_broker_client__"));
+    }
+
+    @Test
+    public void testHeartbeatKeepsOriginalSubscriptionVersion() {
+        ClientConnectionManager manager = new ClientConnectionManager();
+        Channel consumerChannel = mock(Channel.class);
+        when(consumerChannel.isActive()).thenReturn(true);
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData.SubscriptionData sub =
+                new com.mq.proxy.core.protocol.heartbeat.HeartbeatData.SubscriptionData();
+        sub.setTopic("TopicA");
+        sub.setSubString("TagA");
+        sub.setSubVersion(123L);
+        java.util.Set<com.mq.proxy.core.protocol.heartbeat.HeartbeatData.SubscriptionData> subscriptions =
+                new java.util.HashSet<>();
+        subscriptions.add(sub);
+
+        manager.registerConsumer(consumerChannel, "client-001", "group-a",
+                "CONSUME_PASSIVELY", "CLUSTERING", "CONSUME_FROM_LAST_OFFSET", subscriptions);
+
+        RecordingNettyRemotingClient remotingClient = new RecordingNettyRemotingClient();
+        remotingClient.channelActive = true;
+        TestProxyBrokerHeartbeatService service =
+                new TestProxyBrokerHeartbeatService(manager, new TestVirtualRouteManager("broker-a:10911"), remotingClient);
+
+        service.sendHeartbeat();
+
+        assertEquals(1, remotingClient.sentCommands.size());
+        RemotingCommand request = remotingClient.sentCommands.get(0);
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData heartbeatData =
+                com.mq.proxy.core.protocol.heartbeat.HeartbeatData.decode(request.getBody());
+        assertEquals(1, heartbeatData.getConsumerDataSet().size());
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData.ConsumerData consumerData =
+                heartbeatData.getConsumerDataSet().iterator().next();
+        assertEquals("group-a", consumerData.getGroupName());
+        assertEquals(1, consumerData.getSubscriptionDataSet().size());
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData.SubscriptionData forwardedSub =
+                consumerData.getSubscriptionDataSet().iterator().next();
+        assertEquals(123L, forwardedSub.getSubVersion());
+        assertEquals("TagA", forwardedSub.getSubString());
+        assertNotNull(forwardedSub.getTagsSet());
+        assertTrue(forwardedSub.getTagsSet().contains("TagA"));
     }
 
     private static void assertContainsOnly(List<RemotingCommand> actual, ExpectedRequest... expectedRequests) {
@@ -177,6 +222,7 @@ public class ProxyBrokerHeartbeatServiceTest {
         private final List<String> invokedAddrs = new ArrayList<>();
         private final List<RemotingCommand> sentCommands = new ArrayList<>();
         private boolean shutdownCalled;
+        private boolean channelActive;
 
         RecordingNettyRemotingClient() {
             super(new com.mq.proxy.core.server.NettyClientConfig());
@@ -191,6 +237,13 @@ public class ProxyBrokerHeartbeatServiceTest {
             invokedAddrs.add(addr);
             sentCommands.add(request);
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS, "OK");
+        }
+
+        @Override
+        public Channel getAndCreateChannel(String addr) {
+            Channel channel = mock(Channel.class);
+            when(channel.isActive()).thenReturn(channelActive);
+            return channel;
         }
 
         @Override

@@ -5,6 +5,7 @@ import com.mq.proxy.core.engine.ClientConnectionManager;
 import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.engine.ProcessorRegister;
 import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
+import com.mq.proxy.core.engine.UpstreamConsumerSessionManager;
 import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
@@ -76,7 +77,7 @@ public class EmbeddedProxy {
         heartbeatService.setRemotingServer(remotingServer);
         clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
         ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
-                clientConnectionManager, heartbeatService);
+                clientConnectionManager, (UpstreamConsumerSessionManager) heartbeatService);
 
         remotingServer.start();
         heartbeatService.start();

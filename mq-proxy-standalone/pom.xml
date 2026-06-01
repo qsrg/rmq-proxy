@@ -19,39 +19,33 @@
             <artifactId>mq-proxy-core</artifactId>
             <version>${project.version}</version>
         </dependency>
-        
+
         <dependency>
             <groupId>com.mq.proxy</groupId>
             <artifactId>mq-proxy-rocketmq</artifactId>
             <version>${project.version}</version>
         </dependency>
-        
-        <dependency>
-            <groupId>com.mq.proxy</groupId>
-            <artifactId>mq-proxy-mock</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        
+
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>org.apache.rocketmq</groupId>
             <artifactId>rocketmq-client</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
         </dependency>
-        
+
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -62,33 +56,35 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.2.0</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.mq.proxy.core.ProxyStartup</mainClass>
-                            <addClasspath>true</addClasspath>
-                            <classpathPrefix>lib/</classpathPrefix>
-                        </manifest>
-                    </archive>
-                </configuration>
-            </plugin>
-            
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.2.0</version>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.4.1</version>
                 <executions>
                     <execution>
-                        <id>copy-dependencies</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>copy-dependencies</goal>
+                            <goal>shade</goal>
                         </goals>
                         <configuration>
-                            <outputDirectory>${project.build.directory}/mq-proxy/lib</outputDirectory>
-                            <excludeScope>provided</excludeScope>
+                            <finalName>mq-proxy-${project.version}</finalName>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.mq.proxy.core.ProxyStartup</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/services/io.netty.channel.ChannelHandler</resource>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
@@ -112,8 +108,8 @@
                                 <mkdir dir="${project.build.directory}/mq-proxy/conf"/>
                                 <mkdir dir="${project.build.directory}/mq-proxy/logs"/>
 
-                                <copy file="${project.build.directory}/${project.build.finalName}.jar"
-                                      todir="${project.build.directory}/mq-proxy/lib"/>
+                                <copy file="${project.build.directory}/mq-proxy-${project.version}.jar"
+                                      todir="${project.build.directory}/mq-proxy"/>
                                 <copy file="${project.basedir}/bin/proxy.sh"
                                       todir="${project.build.directory}/mq-proxy/bin"/>
                                 <copy file="${project.basedir}/src/main/resources/proxy.properties"
@@ -136,7 +132,7 @@
                                     <tarfileset dir="${project.build.directory}/mq-proxy"
                                                 prefix="mq-proxy-${project.version}">
                                         <include name="conf/**"/>
-                                        <include name="lib/**"/>
+                                        <include name="*.jar"/>
                                         <include name="logs/**"/>
                                     </tarfileset>
                                 </tar>

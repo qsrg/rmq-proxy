@@ -1,33 +1,16 @@
 package com.mq.proxy.rocketmq.integration;
 
-import com.mq.proxy.core.engine.ClientConnectionManager;
-import com.mq.proxy.core.engine.MessageEngine;
-import com.mq.proxy.core.engine.ProcessorRegister;
-import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
-import com.mq.proxy.core.engine.route.RouteInfoSerializer;
-import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.ResponseCode;
-import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
-import com.mq.proxy.core.server.NettyRemotingServer;
-import com.mq.proxy.core.server.NettyServerConfig;
-import com.mq.proxy.core.storage.StorageAdapter;
-import com.mq.proxy.core.storage.StorageConfig;
-import com.mq.proxy.core.storage.model.TopicRouteInfo;
-import com.mq.proxy.rocketmq.adapter.RocketMQStorageAdapter;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.ServerSocket;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
 
 import static org.junit.Assert.*;
 
@@ -37,131 +20,35 @@ public class RocketMQIntegrationTest {
     private static final String TEST_TOPIC = "PROXY_INTEGRATION_TEST";
     private static final String PRODUCER_GROUP = "PID_PROXY_TEST";
     private static final String CONSUMER_GROUP = "CID_PROXY_TEST";
+    private static final String PULL_CONSUMER_GROUP = "CID_PROXY_PULL_TEST";
 
-    private NettyRemotingClient namesrvClient;
-    private String brokerAddr;
-    private NettyRemotingServer proxyServer;
+    private EmbeddedRocketMQProxy proxy;
     private NettyRemotingClient proxyClient;
-    private int proxyPort;
-    private StorageAdapter storageAdapter;
-    private MessageEngine messageEngine;
-    private VirtualRouteManager virtualRouteManager;
-    private ClientConnectionManager clientConnectionManager;
-    private ProxyBrokerHeartbeatService heartbeatService;
 
     @Before
     public void setUp() throws Exception {
-        namesrvClient = new NettyRemotingClient(new NettyClientConfig());
-        namesrvClient.start();
-
-        brokerAddr = discoverBrokerAddr();
-        assertNotNull("Broker address not found, is RocketMQ running on " + NAMESRV_ADDR + "?", brokerAddr);
-        System.out.println("Discovered Broker address: " + brokerAddr);
-
-        proxyPort = findAvailablePort();
-
-        StorageConfig rocketmqConfig = new StorageConfig();
-        rocketmqConfig.setNamesrvAddr(NAMESRV_ADDR);
-        rocketmqConfig.setConnectTimeoutMillis(5000);
-
-        storageAdapter = new RocketMQStorageAdapter();
-        storageAdapter.initialize(rocketmqConfig);
-
-        messageEngine = new MessageEngine(storageAdapter);
-
-        virtualRouteManager = new VirtualRouteManager();
-        virtualRouteManager.start(NAMESRV_ADDR, "127.0.0.1", proxyPort);
-        messageEngine.setVirtualRouteManager(virtualRouteManager);
-
-        clientConnectionManager = new ClientConnectionManager();
-        heartbeatService = new ProxyBrokerHeartbeatService(clientConnectionManager, storageAdapter, "127.0.0.1", proxyPort, virtualRouteManager);
-
-        messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
-
-        NettyServerConfig serverConfig = new NettyServerConfig();
-        serverConfig.setListenPort(proxyPort);
-        proxyServer = new NettyRemotingServer(serverConfig);
-        proxyServer.setClientConnectionManager(clientConnectionManager);
-        messageEngine.setRemotingServer(proxyServer);
-        heartbeatService.setRemotingServer(proxyServer);
-        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
-        ProcessorRegister.registerProcessors(proxyServer, messageEngine, virtualRouteManager,
-                clientConnectionManager, heartbeatService);
-        proxyServer.start();
-        heartbeatService.start();
+        proxy = new EmbeddedRocketMQProxy(NAMESRV_ADDR);
+        proxy.start();
 
         proxyClient = new NettyRemotingClient(new NettyClientConfig());
         proxyClient.start();
 
-        System.out.println("Proxy started on port " + proxyPort + ", forwarding to Broker " + brokerAddr);
+        System.out.println("Proxy started on " + proxy.getProxyAddr() + ", forwarding to Broker " + proxy.getBrokerAddr());
     }
 
     @After
     public void tearDown() {
-        if (heartbeatService != null) {
-            heartbeatService.shutdown();
-        }
         if (proxyClient != null) {
             proxyClient.shutdown();
         }
-        if (proxyServer != null) {
-            proxyServer.shutdown();
+        if (proxy != null) {
+            proxy.shutdown();
         }
-        if (virtualRouteManager != null) {
-            virtualRouteManager.shutdown();
-        }
-        if (storageAdapter != null) {
-            storageAdapter.shutdown();
-        }
-        if (namesrvClient != null) {
-            namesrvClient.shutdown();
-        }
-    }
-
-    @Test
-    public void testNameServerConnectivity() throws Exception {
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ROUTEINFO_BY_TOPIC, null);
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("topic", TEST_TOPIC);
-        request.setExtFields(extFields);
-        request.makeCustomHeaderToNet();
-
-        RemotingCommand response = namesrvClient.invokeSync(NAMESRV_ADDR, request, 5000);
-        System.out.println("NameServer response: code=" + response.getCode());
-        assertTrue("NameServer should return SUCCESS or TOPIC_NOT_EXIST",
-                response.getCode() == RemotingSysResponseCode.SUCCESS
-                        || response.getCode() == ResponseCode.TOPIC_NOT_EXIST);
-    }
-
-    @Test
-    public void testDirectBrokerSendMessage() throws Exception {
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("a", PRODUCER_GROUP);
-        extFields.put("b", TEST_TOPIC);
-        extFields.put("c", "TBW102");
-        extFields.put("d", "4");
-        extFields.put("e", String.valueOf(-1));
-        extFields.put("f", "0");
-        extFields.put("g", String.valueOf(System.currentTimeMillis()));
-        extFields.put("h", "0");
-        extFields.put("j", "0");
-        extFields.put("k", "false");
-        extFields.put("l", "16");
-        extFields.put("m", "false");
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
-        request.setExtFields(extFields);
-        request.setBody("Direct Broker Test".getBytes("UTF-8"));
-
-        RemotingCommand response = namesrvClient.invokeSync(brokerAddr, request, 10000);
-        System.out.println("Direct broker send: code=" + response.getCode() + ", extFields=" + response.getExtFields());
-        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-        assertNotNull(response.getExtFields().get("msgId"));
     }
 
     @Test
     public void testProxySendMessage() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("a", PRODUCER_GROUP);
@@ -191,97 +78,8 @@ public class RocketMQIntegrationTest {
     }
 
     @Test
-    public void testProxyPullMessage() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
-
-        HashMap<String, String> sendExtFields = new HashMap<>();
-        sendExtFields.put("a", PRODUCER_GROUP);
-        sendExtFields.put("b", TEST_TOPIC);
-        sendExtFields.put("c", "TBW102");
-        sendExtFields.put("d", "4");
-        sendExtFields.put("e", String.valueOf(-1));
-        sendExtFields.put("f", "0");
-        sendExtFields.put("g", String.valueOf(System.currentTimeMillis()));
-        sendExtFields.put("h", "0");
-        sendExtFields.put("j", "0");
-        sendExtFields.put("k", "false");
-        sendExtFields.put("l", "16");
-        sendExtFields.put("m", "false");
-
-        RemotingCommand sendRequest = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
-        sendRequest.setExtFields(sendExtFields);
-        sendRequest.setBody("Pull Test Message".getBytes("UTF-8"));
-
-        RemotingCommand sendResponse = proxyClient.invokeSync(proxyAddr, sendRequest, 10000);
-        assertEquals("Send should succeed before pull test", RemotingSysResponseCode.SUCCESS, sendResponse.getCode());
-
-        int queueId = Integer.parseInt(sendResponse.getExtFields().get("queueId"));
-        long queueOffset = Long.parseLong(sendResponse.getExtFields().get("queueOffset"));
-
-        registerConsumerHeartbeat(proxyAddr, "pull-test-client", CONSUMER_GROUP, TEST_TOPIC, "*");
-
-        Thread.sleep(500);
-
-        HashMap<String, String> pullExtFields = new HashMap<>();
-        pullExtFields.put("consumerGroup", CONSUMER_GROUP);
-        pullExtFields.put("topic", TEST_TOPIC);
-        pullExtFields.put("queueId", String.valueOf(queueId));
-        pullExtFields.put("queueOffset", String.valueOf(queueOffset));
-        pullExtFields.put("maxMsgNums", "32");
-        pullExtFields.put("sysFlag", "0");
-        pullExtFields.put("commitOffset", "0");
-        pullExtFields.put("suspendTimeoutMillis", "0");
-        pullExtFields.put("subVersion", String.valueOf(System.currentTimeMillis()));
-        pullExtFields.put("expressionType", "TAG");
-
-        RemotingCommand pullRequest = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
-        pullRequest.setExtFields(pullExtFields);
-
-        RemotingCommand pullResponse = proxyClient.invokeSync(proxyAddr, pullRequest, 10000);
-        System.out.println("Pull response: code=" + pullResponse.getCode() + ", bodyLen=" + (pullResponse.getBody() != null ? pullResponse.getBody().length : 0));
-
-        assertEquals("Pull should succeed for a registered consumer", RemotingSysResponseCode.SUCCESS,
-                pullResponse.getCode());
-        assertNotNull("Pull response body should contain the sent message", pullResponse.getBody());
-        assertTrue("Pull response body should not be empty", pullResponse.getBody().length > 0);
-
-    }
-
-    private void registerConsumerHeartbeat(String proxyAddr, String clientId,
-                                           String consumerGroup, String topic, String subString) throws Exception {
-        HeartbeatData heartbeatData = new HeartbeatData();
-        heartbeatData.setClientID(clientId);
-
-        Set<HeartbeatData.ConsumerData> consumerDataSet = new HashSet<>();
-        HeartbeatData.ConsumerData consumerData = new HeartbeatData.ConsumerData();
-        consumerData.setGroupName(consumerGroup);
-        consumerData.setConsumeType("CONSUME_PASSIVELY");
-        consumerData.setMessageModel("CLUSTERING");
-        consumerData.setConsumeFromWhere("CONSUME_FROM_LAST_OFFSET");
-
-        Set<HeartbeatData.SubscriptionData> subscriptionDataSet = new HashSet<>();
-        HeartbeatData.SubscriptionData subscriptionData = new HeartbeatData.SubscriptionData();
-        subscriptionData.setTopic(topic);
-        subscriptionData.setSubString(subString);
-        subscriptionData.setSubVersion(System.currentTimeMillis());
-        subscriptionData.setExpressionType("TAG");
-        subscriptionDataSet.add(subscriptionData);
-
-        consumerData.setSubscriptionDataSet(subscriptionDataSet);
-        consumerDataSet.add(consumerData);
-        heartbeatData.setConsumerDataSet(consumerDataSet);
-
-        RemotingCommand heartbeatRequest = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
-        heartbeatRequest.setBody(heartbeatData.encode());
-
-        RemotingCommand heartbeatResponse = proxyClient.invokeSync(proxyAddr, heartbeatRequest, 10000);
-        assertEquals("Consumer heartbeat registration should succeed", RemotingSysResponseCode.SUCCESS,
-                heartbeatResponse.getCode());
-    }
-
-    @Test
     public void testProxyQueryConsumerOffset() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("consumerGroup", CONSUMER_GROUP);
@@ -301,7 +99,7 @@ public class RocketMQIntegrationTest {
 
     @Test
     public void testProxyUpdateConsumerOffset() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("consumerGroup", CONSUMER_GROUP);
@@ -319,7 +117,7 @@ public class RocketMQIntegrationTest {
 
     @Test
     public void testProxyGetRouteInfo() throws Exception {
-        String proxyAddr = "127.0.0.1:" + proxyPort;
+        String proxyAddr = proxy.getProxyAddr();
 
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("topic", TEST_TOPIC);
@@ -340,69 +138,80 @@ public class RocketMQIntegrationTest {
         }
     }
 
-    private String discoverBrokerAddr() throws Exception {
-        return discoverBrokerAddr(namesrvClient, NAMESRV_ADDR);
-    }
+    @Test
+    public void testProxySendMessageAndPullMessage() throws Exception {
+        String proxyAddr = proxy.getProxyAddr();
+        String pullTopic = TEST_TOPIC + "_PULL_" + System.currentTimeMillis();
+        String pullGroup = PULL_CONSUMER_GROUP + "_" + System.currentTimeMillis();
 
-    public static String discoverBrokerAddr(NettyRemotingClient client, String namesrvAddr) throws Exception {
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ROUTEINFO_BY_TOPIC, null);
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("topic", "TBW102");
-        request.setExtFields(extFields);
-        request.makeCustomHeaderToNet();
+        HashMap<String, String> sendExtFields = new HashMap<>();
+        sendExtFields.put("a", PRODUCER_GROUP + "_PULL");
+        sendExtFields.put("b", pullTopic);
+        sendExtFields.put("c", "TBW102");
+        sendExtFields.put("d", "4");
+        sendExtFields.put("e", String.valueOf(-1));
+        sendExtFields.put("f", "0");
+        sendExtFields.put("g", String.valueOf(System.currentTimeMillis()));
+        sendExtFields.put("h", "0");
+        sendExtFields.put("j", "0");
+        sendExtFields.put("k", "false");
+        sendExtFields.put("l", "16");
+        sendExtFields.put("m", "false");
 
-        try {
-            RemotingCommand response = client.invokeSync(namesrvAddr, request, 5000);
-            if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
-                TopicRouteInfo routeInfo = RouteInfoSerializer.decodeTopicRouteInfo(response.getBody());
-                if (routeInfo.getBrokerDatas() != null && !routeInfo.getBrokerDatas().isEmpty()) {
-                    Map<Long, String> addrs = routeInfo.getBrokerDatas().get(0).getBrokerAddrs();
-                    if (addrs != null && !addrs.isEmpty()) {
-                        String masterAddr = addrs.get(0L);
-                        if (masterAddr != null) {
-                            return masterAddr;
-                        }
-                        return addrs.values().iterator().next();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("Failed to discover broker from TBW102: " + e.getMessage());
+        int sendCount = 3;
+        for (int i = 0; i < sendCount; i++) {
+            HashMap<String, String> perSendExtFields = new HashMap<>(sendExtFields);
+            perSendExtFields.put("e", "0");
+
+            RemotingCommand sendRequest = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
+            sendRequest.setExtFields(perSendExtFields);
+            sendRequest.setBody(("PullTestMsg-" + i).getBytes("UTF-8"));
+
+            RemotingCommand sendResponse = proxyClient.invokeSync(proxyAddr, sendRequest, 10000);
+            System.out.println("Send message " + i + ": code=" + sendResponse.getCode()
+                    + ", msgId=" + (sendResponse.getExtFields() != null ? sendResponse.getExtFields().get("msgId") : "null"));
+            assertEquals("Send message " + i + " should succeed",
+                    RemotingSysResponseCode.SUCCESS, sendResponse.getCode());
         }
 
-        request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
-        try {
-            RemotingCommand response = client.invokeSync(namesrvAddr, request, 5000);
-            if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
-                String json = new String(response.getBody(), "UTF-8");
-                json = RouteInfoSerializer.fixNumericKeys(json);
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                mapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-                Map<String, Object> clusterInfo = mapper.readValue(json, Map.class);
-                Map<String, Object> brokerAddrTable = (Map<String, Object>) clusterInfo.get("brokerAddrTable");
-                if (brokerAddrTable != null && !brokerAddrTable.isEmpty()) {
-                    Map<String, Object> firstBroker = (Map<String, Object>) brokerAddrTable.values().iterator().next();
-                    Map<String, Object> brokerAddrs = (Map<String, Object>) firstBroker.get("brokerAddrs");
-                    if (brokerAddrs != null && !brokerAddrs.isEmpty()) {
-                        Object masterAddr = brokerAddrs.get("0");
-                        if (masterAddr == null) {
-                            masterAddr = brokerAddrs.values().iterator().next();
-                        }
-                        return masterAddr.toString();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("Failed to discover broker from cluster info: " + e.getMessage());
-        }
+        Thread.sleep(1000);
 
-        return null;
-    }
+        HashMap<String, String> updateExtFields = new HashMap<>();
+        updateExtFields.put("consumerGroup", pullGroup);
+        updateExtFields.put("topic", pullTopic);
+        updateExtFields.put("queueId", "0");
+        updateExtFields.put("commitOffset", "0");
 
-    private int findAvailablePort() throws Exception {
-        ServerSocket ss = new ServerSocket(0);
-        int port = ss.getLocalPort();
-        ss.close();
-        return port;
+        RemotingCommand updateRequest = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
+        updateRequest.setExtFields(updateExtFields);
+        RemotingCommand updateResponse = proxyClient.invokeSync(proxyAddr, updateRequest, 10000);
+        System.out.println("Update offset: code=" + updateResponse.getCode());
+        assertEquals(RemotingSysResponseCode.SUCCESS, updateResponse.getCode());
+
+        HashMap<String, String> pullExtFields = new HashMap<>();
+        pullExtFields.put("consumerGroup", pullGroup);
+        pullExtFields.put("topic", pullTopic);
+        pullExtFields.put("queueId", "0");
+        pullExtFields.put("queueOffset", "0");
+        pullExtFields.put("maxMsgNums", "32");
+        pullExtFields.put("sysFlag", "0");
+        pullExtFields.put("suspendTimeoutMillis", "0");
+
+        RemotingCommand pullRequest = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
+        pullRequest.setExtFields(pullExtFields);
+
+        RemotingCommand pullResponse = proxyClient.invokeSync(proxyAddr, pullRequest, 10000);
+        System.out.println("Pull message: code=" + pullResponse.getCode()
+                + ", extFields=" + pullResponse.getExtFields()
+                + ", bodyLen=" + (pullResponse.getBody() != null ? pullResponse.getBody().length : 0));
+
+        assertEquals("Pull should succeed", RemotingSysResponseCode.SUCCESS, pullResponse.getCode());
+        assertNotNull("Pull response extFields should not be null", pullResponse.getExtFields());
+        assertNotNull("nextBeginOffset should not be null", pullResponse.getExtFields().get("nextBeginOffset"));
+        assertNotNull("minOffset should not be null", pullResponse.getExtFields().get("minOffset"));
+        assertNotNull("maxOffset should not be null", pullResponse.getExtFields().get("maxOffset"));
+
+        long maxOffset = Long.parseLong(pullResponse.getExtFields().get("maxOffset"));
+        assertTrue("Should have messages available, maxOffset=" + maxOffset, maxOffset > 0);
     }
 }

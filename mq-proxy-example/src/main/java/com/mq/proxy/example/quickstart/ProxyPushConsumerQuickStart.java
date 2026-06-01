@@ -53,8 +53,8 @@ public class ProxyPushConsumerQuickStart {
         } catch (Exception e) {
             System.out.println("异常: " + e.getMessage());
         } finally {
-            consumer.shutdown();
-            System.out.println("PushConsumer 已关闭");
+            //consumer.shutdown();
+            //System.out.println("PushConsumer 已关闭");
         }
     }
 }

@@ -13,6 +13,11 @@ import com.mq.proxy.sdk.facade.ProxyClientFacade;
 import com.mq.proxy.sdk.monitor.ProxyMetricsSnapshot;
 import com.mq.proxy.sdk.remoting.SDKRequestProcessor;
 import io.netty.channel.ChannelHandlerContext;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.protocol.body.ConsumerRunningInfo;
+import org.apache.rocketmq.common.protocol.body.ProcessQueueInfo;
+import org.apache.rocketmq.common.protocol.heartbeat.ConsumeType;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +26,10 @@ import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -53,6 +61,7 @@ public class ProxyConsumer {
 
     private static final int FLAG_COMMIT_OFFSET = 0x01;
     private static final int FLAG_SUSPEND = 0x02;
+    private static final int FLAG_SUBSCRIPTION = 0x04;
     private static final int QUERY_NOT_FOUND = 206;
 
     private final ProxyConsumerConfig config;
@@ -63,11 +72,16 @@ public class ProxyConsumer {
     private final LocalOffsetStore localOffsetStore = new LocalOffsetStore();
 
     private final ConcurrentHashMap<String, String> subscriptions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> subscriptionVersions = new ConcurrentHashMap<>();
 
     private final CopyOnWriteArrayList<ConsumerChangeListener> consumerChangeListeners =
         new CopyOnWriteArrayList<>();
 
+    private volatile ConsumerRunningInfoProvider consumerRunningInfoProvider;
+
     private String heartbeatClientId;
+
+    private volatile long consumerStartTimestamp;
 
     private ScheduledExecutorService heartbeatExecutor;
 
@@ -137,7 +151,11 @@ public class ProxyConsumer {
     }
 
     public ProxyConsumer subscribe(String topic, String subExpression) {
-        subscriptions.put(topic, subExpression != null ? subExpression : "*");
+        String normalizedExpression = subExpression != null ? subExpression : "*";
+        String previousExpression = subscriptions.put(topic, normalizedExpression);
+        if (!normalizedExpression.equals(previousExpression) || !subscriptionVersions.containsKey(topic)) {
+            subscriptionVersions.put(topic, System.currentTimeMillis());
+        }
         return this;
     }
 
@@ -147,6 +165,10 @@ public class ProxyConsumer {
 
     public ProxyClientFacade getFacade() {
         return facade;
+    }
+
+    public void setConsumerRunningInfoProvider(ConsumerRunningInfoProvider consumerRunningInfoProvider) {
+        this.consumerRunningInfoProvider = consumerRunningInfoProvider;
     }
 
     public String getClientId() {
@@ -173,6 +195,7 @@ public class ProxyConsumer {
             if (facade == null) {
                 facade = new ProxyClientFacade(config);
             }
+            consumerStartTimestamp = System.currentTimeMillis();
             facade.start();
             registerNotifyProcessor();
             sendConsumerRegistration();
@@ -347,7 +370,7 @@ public class ProxyConsumer {
             HeartbeatData.SubscriptionData subscriptionData = new HeartbeatData.SubscriptionData();
             subscriptionData.setTopic(entry.getKey());
             subscriptionData.setSubString(entry.getValue());
-            subscriptionData.setSubVersion(Long.MAX_VALUE);
+            subscriptionData.setSubVersion(getSubscriptionVersion(entry.getKey()));
             subscriptionDataSet.add(subscriptionData);
         }
         consumerData.setSubscriptionDataSet(subscriptionDataSet);
@@ -440,6 +463,63 @@ public class ProxyConsumer {
                     return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
                 }
             });
+
+        facade.getRemotingClient().registerProcessor(RequestCode.GET_CONSUMER_RUNNING_INFO,
+            new SDKRequestProcessor() {
+                @Override
+                public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) {
+                    ConsumerRunningInfo runningInfo = buildConsumerRunningInfo();
+                    RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+                    response.setBody(runningInfo.encode());
+                    return response;
+                }
+            });
+    }
+
+    private ConsumerRunningInfo buildConsumerRunningInfo() {
+        ConsumerRunningInfo runningInfo = new ConsumerRunningInfo();
+        runningInfo.setProperties(buildRunningInfoProperties());
+        runningInfo.setSubscriptionSet(buildRunningInfoSubscriptions());
+        runningInfo.setMqTable(buildRunningInfoMqTable());
+        return runningInfo;
+    }
+
+    private Properties buildRunningInfoProperties() {
+        Properties properties = new Properties();
+        properties.put(ConsumerRunningInfo.PROP_NAMESERVER_ADDR, config.getProxyAddrs());
+        properties.put(ConsumerRunningInfo.PROP_THREADPOOL_CORE_SIZE, 1);
+        properties.put(ConsumerRunningInfo.PROP_CONSUME_ORDERLY, false);
+        properties.put(ConsumerRunningInfo.PROP_CONSUME_TYPE, resolveConsumeType());
+        properties.put(ConsumerRunningInfo.PROP_CLIENT_VERSION, "MQ_PROXY_SDK");
+        properties.put(ConsumerRunningInfo.PROP_CONSUMER_START_TIMESTAMP, consumerStartTimestamp);
+        return properties;
+    }
+
+    private TreeSet<SubscriptionData> buildRunningInfoSubscriptions() {
+        TreeSet<SubscriptionData> subscriptionSet = new TreeSet<>();
+        for (Map.Entry<String, String> entry : subscriptions.entrySet()) {
+            SubscriptionData subscriptionData = new SubscriptionData();
+            subscriptionData.setTopic(entry.getKey());
+            subscriptionData.setSubString(entry.getValue());
+            subscriptionData.setSubVersion(getSubscriptionVersion(entry.getKey()));
+            subscriptionSet.add(subscriptionData);
+        }
+        return subscriptionSet;
+    }
+
+    private TreeMap<MessageQueue, ProcessQueueInfo> buildRunningInfoMqTable() {
+        ConsumerRunningInfoProvider provider = consumerRunningInfoProvider;
+        if (provider == null) {
+            return new TreeMap<>();
+        }
+        return provider.snapshotProcessQueueTable();
+    }
+
+    private ConsumeType resolveConsumeType() {
+        if ("CONSUME_PASSIVELY".equals(config.getConsumeType())) {
+            return ConsumeType.CONSUME_PASSIVELY;
+        }
+        return ConsumeType.CONSUME_ACTIVELY;
     }
 
     private RemotingCommand buildPullMessageRequest(String topic, String consumerGroup,
@@ -453,6 +533,12 @@ public class ProxyConsumer {
             sysFlag |= FLAG_SUSPEND;
         }
 
+        String subExpression = subscriptions.getOrDefault(topic, "*");
+        boolean hasSubscription = !"*".equals(subExpression);
+        if (hasSubscription) {
+            sysFlag |= FLAG_SUBSCRIPTION;
+        }
+
         PullMessageRequestHeader header = new PullMessageRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -462,14 +548,18 @@ public class ProxyConsumer {
         header.setSysFlag(sysFlag);
         header.setCommitOffset(commitOffset);
         header.setSuspendTimeoutMillis(suspendTimeout);
-        header.setSubscription("*");
-        header.setSubVersion(System.currentTimeMillis());
+        header.setSubscription(subExpression);
+        header.setSubVersion(getSubscriptionVersion(topic));
         header.setExpressionType("TAG");
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
         request.makeCustomHeaderToNet();
 
         return request;
+    }
+
+    private long getSubscriptionVersion(String topic) {
+        return subscriptionVersions.computeIfAbsent(topic, ignored -> System.currentTimeMillis());
     }
 
     private PullResult parsePullResult(RemotingCommand response) {
@@ -537,5 +627,9 @@ public class ProxyConsumer {
         public void updateOffset(String group, String topic, int queueId, long offset) {
             offsetTable.put(key(group, topic, queueId), offset);
         }
+    }
+
+    public interface ConsumerRunningInfoProvider {
+        TreeMap<MessageQueue, ProcessQueueInfo> snapshotProcessQueueTable();
     }
 }

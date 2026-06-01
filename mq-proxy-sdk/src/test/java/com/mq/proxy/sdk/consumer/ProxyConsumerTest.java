@@ -12,6 +12,7 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.HashMap;
+import java.util.Iterator;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,18 +33,7 @@ public class ProxyConsumerTest {
         when(mockFacade.getRemotingClient()).thenReturn(mock(com.mq.proxy.sdk.remoting.ProxyRemotingClient.class));
 
         consumer = new ProxyConsumer("TestConsumerGroup");
-        // 手动注入mock facade（测试用）
-        try {
-            java.lang.reflect.Field facadeField = ProxyConsumer.class.getDeclaredField("facade");
-            facadeField.setAccessible(true);
-            facadeField.set(consumer, mockFacade);
-
-            java.lang.reflect.Field startedField = ProxyConsumer.class.getDeclaredField("started");
-            startedField.setAccessible(true);
-            startedField.set(consumer, true);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        injectFacade(consumer, mockFacade, true);
     }
 
     @Test
@@ -142,6 +132,89 @@ public class ProxyConsumerTest {
         HashMap<String, String> extFields = request.getExtFields();
         assertEquals("100", extFields.get("commitOffset"));
         assertEquals("1", extFields.get("sysFlag"));
+    }
+
+    @Test
+    public void testStartRegistrationUsesFiniteSubscriptionVersion() throws Exception {
+        ProxyConsumer startConsumer = new ProxyConsumer("TestConsumerGroup");
+        injectFacade(startConsumer, mockFacade, false);
+
+        startConsumer.subscribe("TestTopic", "TagA");
+        when(mockFacade.invokeSync(any(RemotingCommand.class), anyLong()))
+                .thenReturn(RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS));
+
+        startConsumer.start();
+
+        ArgumentCaptor<RemotingCommand> requestCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockFacade).start();
+        verify(mockFacade, atLeastOnce()).invokeSync(requestCaptor.capture(), anyLong());
+
+        RemotingCommand heartbeatRequest = requestCaptor.getAllValues().stream()
+                .filter(command -> command.getCode() == RequestCode.HEART_BEAT)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing heartbeat registration request"));
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData heartbeatData =
+                com.mq.proxy.core.protocol.heartbeat.HeartbeatData.decode(heartbeatRequest.getBody());
+        assertEquals(1, heartbeatData.getConsumerDataSet().size());
+
+        Iterator<com.mq.proxy.core.protocol.heartbeat.HeartbeatData.ConsumerData> consumerIterator =
+                heartbeatData.getConsumerDataSet().iterator();
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData.ConsumerData consumerData = consumerIterator.next();
+        assertEquals("TestConsumerGroup", consumerData.getGroupName());
+        assertEquals(1, consumerData.getSubscriptionDataSet().size());
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData.SubscriptionData subscriptionData =
+                consumerData.getSubscriptionDataSet().iterator().next();
+        assertNotEquals(Long.MAX_VALUE, subscriptionData.getSubVersion());
+        assertTrue(subscriptionData.getSubVersion() > 0L);
+    }
+
+    @Test
+    public void testPullRequestUsesSubscribedVersion() throws Exception {
+        ProxyConsumer startConsumer = new ProxyConsumer("TestConsumerGroup");
+        injectFacade(startConsumer, mockFacade, false);
+
+        startConsumer.subscribe("TestTopic", "TagA");
+        when(mockFacade.invokeSync(any(RemotingCommand.class), anyLong()))
+                .thenReturn(RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS))
+                .thenReturn(buildPullSuccessResponse(100L, 0L, 200L, 0L, new byte[]{1}));
+
+        startConsumer.start();
+        startConsumer.pull("TestTopic", "TestConsumerGroup", 0, 50L, 32);
+
+        ArgumentCaptor<RemotingCommand> requestCaptor = ArgumentCaptor.forClass(RemotingCommand.class);
+        verify(mockFacade, atLeast(2)).invokeSync(requestCaptor.capture(), anyLong());
+
+        RemotingCommand heartbeatRequest = requestCaptor.getAllValues().stream()
+                .filter(command -> command.getCode() == RequestCode.HEART_BEAT)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing heartbeat registration request"));
+        RemotingCommand pullRequest = requestCaptor.getAllValues().stream()
+                .filter(command -> command.getCode() == RequestCode.PULL_MESSAGE)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing pull request"));
+
+        com.mq.proxy.core.protocol.heartbeat.HeartbeatData heartbeatData =
+                com.mq.proxy.core.protocol.heartbeat.HeartbeatData.decode(heartbeatRequest.getBody());
+        long registeredVersion = heartbeatData.getConsumerDataSet().iterator().next()
+                .getSubscriptionDataSet().iterator().next().getSubVersion();
+
+        assertEquals(String.valueOf(registeredVersion), pullRequest.getExtFields().get("subVersion"));
+    }
+
+    private void injectFacade(ProxyConsumer targetConsumer, ProxyClientFacade targetFacade, boolean started) {
+        try {
+            java.lang.reflect.Field facadeField = ProxyConsumer.class.getDeclaredField("facade");
+            facadeField.setAccessible(true);
+            facadeField.set(targetConsumer, targetFacade);
+
+            java.lang.reflect.Field startedField = ProxyConsumer.class.getDeclaredField("started");
+            startedField.setAccessible(true);
+            startedField.set(targetConsumer, started);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private RemotingCommand buildPullSuccessResponse(long nextBeginOffset, long minOffset,

@@ -13,6 +13,8 @@ public class ProxyConsumerConfig extends ProxyCommonConfig {
 
     private String messageModel = "CLUSTERING";
 
+    private String consumeType = "CONSUME_ACTIVELY";
+
     public String getConsumerGroup() {
         return consumerGroup;
     }
@@ -37,6 +39,15 @@ public class ProxyConsumerConfig extends ProxyCommonConfig {
 
     public ProxyConsumerConfig setMessageModel(String messageModel) {
         this.messageModel = messageModel;
+        return this;
+    }
+
+    public String getConsumeType() {
+        return consumeType;
+    }
+
+    public ProxyConsumerConfig setConsumeType(String consumeType) {
+        this.consumeType = consumeType;
         return this;
     }
 }
