@@ -13,6 +13,14 @@ public class ProxyCommonConfig {
 
     private long faultIsolationDurationMillis = 30000L;
 
+    private boolean enableFaultDetector = true;
+    private long faultDetectorIntervalMillis = 3000L;
+
+    private long[] latencyMax = {50L, 100L, 550L, 1800L, 3000L, 5000L, 15000L};
+    private long[] notAvailableDuration = {0L, 0L, 2000L, 5000L, 6000L, 10000L, 30000L};
+
+    private long requestTimeoutPerRetryMillis = -1L;
+
     private boolean enableMetrics = true;
     private boolean enableTrace = true;
 
@@ -68,6 +76,51 @@ public class ProxyCommonConfig {
 
     public ProxyCommonConfig setFaultIsolationDurationMillis(long faultIsolationDurationMillis) {
         this.faultIsolationDurationMillis = faultIsolationDurationMillis;
+        return this;
+    }
+
+    public boolean isEnableFaultDetector() {
+        return enableFaultDetector;
+    }
+
+    public ProxyCommonConfig setEnableFaultDetector(boolean enableFaultDetector) {
+        this.enableFaultDetector = enableFaultDetector;
+        return this;
+    }
+
+    public long getFaultDetectorIntervalMillis() {
+        return faultDetectorIntervalMillis;
+    }
+
+    public ProxyCommonConfig setFaultDetectorIntervalMillis(long faultDetectorIntervalMillis) {
+        this.faultDetectorIntervalMillis = faultDetectorIntervalMillis;
+        return this;
+    }
+
+    public long[] getLatencyMax() {
+        return latencyMax;
+    }
+
+    public ProxyCommonConfig setLatencyMax(long[] latencyMax) {
+        this.latencyMax = latencyMax;
+        return this;
+    }
+
+    public long[] getNotAvailableDuration() {
+        return notAvailableDuration;
+    }
+
+    public ProxyCommonConfig setNotAvailableDuration(long[] notAvailableDuration) {
+        this.notAvailableDuration = notAvailableDuration;
+        return this;
+    }
+
+    public long getRequestTimeoutPerRetryMillis() {
+        return requestTimeoutPerRetryMillis;
+    }
+
+    public ProxyCommonConfig setRequestTimeoutPerRetryMillis(long requestTimeoutPerRetryMillis) {
+        this.requestTimeoutPerRetryMillis = requestTimeoutPerRetryMillis;
         return this;
     }
 

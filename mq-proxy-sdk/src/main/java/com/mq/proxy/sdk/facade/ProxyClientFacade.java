@@ -47,6 +47,7 @@ public class ProxyClientFacade {
         if (!started) {
             remotingClient.start();
             startIdleChannelScan();
+            addressManager.startDetector(channelManager);
             started = true;
             log.info("ProxyClientFacade started");
         }
@@ -57,8 +58,15 @@ public class ProxyClientFacade {
 
         int maxRetryTimes = config.getRetryTimes();
         Exception lastException = null;
+        long beginTimestamp = System.currentTimeMillis();
+        long deadline = beginTimestamp + timeoutMillis;
 
         for (int i = 0; i < maxRetryTimes; i++) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                break;
+            }
+
             String proxyAddr = addressManager.selectProxyAddr();
             if (proxyAddr == null) {
                 throw new ProxyConnectException("No available proxy address");
@@ -67,26 +75,38 @@ public class ProxyClientFacade {
             long startTime = System.currentTimeMillis();
 
             try {
-                Channel channel = channelManager.getOrCreateChannel(proxyAddr);
+                long connectTimeout = Math.min(remaining, config.getConnectTimeoutMillis());
+                Channel channel = channelManager.getOrCreateChannel(proxyAddr, connectTimeout);
 
-                RemotingCommand response = remotingClient.invokeSync(channel, request, timeoutMillis);
+                long afterConnectRemaining = deadline - System.currentTimeMillis();
+                if (afterConnectRemaining <= 0) {
+                    throw new ProxyConnectException(proxyAddr, "No time left after connect");
+                }
 
-                addressManager.clearFault(proxyAddr);
+                long curTimeout = computeTimeoutForRetry(afterConnectRemaining, i, maxRetryTimes);
+
+                RemotingCommand response = remotingClient.invokeSync(channel, request, curTimeout);
 
                 long elapsed = System.currentTimeMillis() - startTime;
+                addressManager.clearFault(proxyAddr);
                 metricsCollector.recordSuccess(proxyAddr, elapsed);
 
                 return response;
 
             } catch (Exception e) {
-                addressManager.markFault(proxyAddr);
+                long elapsed = System.currentTimeMillis() - startTime;
+                long faultLatency = elapsed;
+                if (isConnectionException(e)) {
+                    faultLatency = 10000L;
+                }
+                addressManager.markFault(proxyAddr, faultLatency);
                 channelManager.closeChannel(proxyAddr);
 
                 metricsCollector.recordFailure(proxyAddr, e);
 
                 lastException = e;
-                log.warn("Request to proxy {} failed, attempt {}/{}, error: {}",
-                    proxyAddr, i + 1, maxRetryTimes, e.getMessage());
+                log.warn("Request to proxy {} failed, attempt {}/{}, latency={}ms, error: {}",
+                    proxyAddr, i + 1, maxRetryTimes, elapsed, e.getMessage());
             }
         }
 
@@ -109,15 +129,20 @@ public class ProxyClientFacade {
             InvokeCallback wrappedCallback = new InvokeCallback() {
                 @Override
                 public void onSuccess(com.mq.proxy.core.protocol.RemotingCommand response) {
-                    addressManager.clearFault(proxyAddr);
                     long elapsed = System.currentTimeMillis() - startTime;
+                    addressManager.clearFault(proxyAddr);
                     metricsCollector.recordSuccess(proxyAddr, elapsed);
                     callback.onSuccess(response);
                 }
 
                 @Override
                 public void onException(Throwable cause) {
-                    addressManager.markFault(proxyAddr);
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    long faultLatency = elapsed;
+                    if (isConnectionException(cause)) {
+                        faultLatency = 10000L;
+                    }
+                    addressManager.markFault(proxyAddr, faultLatency);
                     channelManager.closeChannel(proxyAddr);
                     metricsCollector.recordFailure(proxyAddr,
                             cause instanceof Exception ? (Exception) cause : new RuntimeException(cause));
@@ -126,7 +151,12 @@ public class ProxyClientFacade {
             };
             remotingClient.invokeAsync(channel, request, timeoutMillis, wrappedCallback);
         } catch (Exception e) {
-            addressManager.markFault(proxyAddr);
+            long elapsed = System.currentTimeMillis() - startTime;
+            long faultLatency = elapsed;
+            if (isConnectionException(e)) {
+                faultLatency = 10000L;
+            }
+            addressManager.markFault(proxyAddr, faultLatency);
             channelManager.closeChannel(proxyAddr);
             metricsCollector.recordFailure(proxyAddr, e);
             throw new ProxyException("invokeAsync failed for proxy " + proxyAddr, e);
@@ -139,14 +169,55 @@ public class ProxyClientFacade {
             throw new ProxyConnectException("No available proxy address");
         }
 
+        long startTime = System.currentTimeMillis();
         try {
             Channel channel = channelManager.getOrCreateChannel(proxyAddr);
             remotingClient.invokeOneway(channel, request);
         } catch (Exception e) {
-            addressManager.markFault(proxyAddr);
+            long elapsed = System.currentTimeMillis() - startTime;
+            long faultLatency = elapsed;
+            if (isConnectionException(e)) {
+                faultLatency = 10000L;
+            }
+            addressManager.markFault(proxyAddr, faultLatency);
             channelManager.closeChannel(proxyAddr);
             throw new ProxyException("invokeOneway failed for proxy " + proxyAddr, e);
         }
+    }
+
+    private long computeTimeoutForRetry(long remaining, int currentAttempt, int maxRetryTimes) {
+        long maxPerRetry = config.getRequestTimeoutPerRetryMillis();
+        if (maxPerRetry > 0 && currentAttempt < maxRetryTimes - 1 && remaining > maxPerRetry) {
+            return maxPerRetry;
+        }
+        return remaining;
+    }
+
+    private boolean isConnectionException(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            if (current instanceof ProxyConnectException) {
+                return true;
+            }
+            if (matchConnectionMessage(current.getMessage())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private boolean matchConnectionMessage(String msg) {
+        if (msg == null) {
+            return false;
+        }
+        String lower = msg.toLowerCase();
+        return lower.contains("connection refused")
+                || lower.contains("connection reset")
+                || lower.contains("broken pipe")
+                || lower.contains("connect timed out")
+                || lower.contains("no route to host")
+                || lower.contains("network is unreachable");
     }
 
     private void startIdleChannelScan() {
@@ -163,6 +234,7 @@ public class ProxyClientFacade {
 
     public void shutdown() {
         started = false;
+        addressManager.shutdownDetector();
         scheduledExecutor.shutdown();
         channelManager.closeAllChannels();
         remotingClient.shutdown();
