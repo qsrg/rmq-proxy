@@ -28,10 +28,14 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyPushConsumer {
 
@@ -135,25 +139,42 @@ public class ProxyPushConsumer {
         pullConsumer.getConfig().setConsumeType("CONSUME_PASSIVELY");
         pullConsumer.setConsumerRunningInfoProvider(this::snapshotProcessQueueTable);
 
-        rebalanceExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "Rebalance-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        rebalanceExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "RebalanceThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
-        pullExecutor = Executors.newScheduledThreadPool(config.getWorkerThreadNums(), r -> {
-            Thread t = new Thread(r, "Pull-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        pullExecutor = new ScheduledThreadPoolExecutor(config.getWorkerThreadNums(), new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "PullThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
-        consumeExecutor = Executors.newFixedThreadPool(config.getConsumeThreadNums(), r -> {
-            Thread t = new Thread(r, "Consume-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        consumeExecutor = new ThreadPoolExecutor(config.getConsumeThreadNums(), config.getConsumeThreadNums(),
+            60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(100000), new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "ConsumeMessageThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
-        autoCommitExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "AutoCommit-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        autoCommitExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "AutoCommitThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
 
         registerRebalanceProcessor();

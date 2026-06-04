@@ -13,9 +13,11 @@ import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyClientFacade {
 
@@ -40,7 +42,15 @@ public class ProxyClientFacade {
         this.metricsCollector = new MetricsCollector(config);
         this.traceCollector = new TraceCollector(config);
 
-        this.scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.scheduledExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "FacadeScheduledThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
+        });
     }
 
     public void start() {

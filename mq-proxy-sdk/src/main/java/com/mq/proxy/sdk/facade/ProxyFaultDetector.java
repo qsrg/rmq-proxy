@@ -4,11 +4,11 @@ import com.mq.proxy.sdk.config.ProxyCommonConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyFaultDetector {
 
@@ -19,61 +19,57 @@ public class ProxyFaultDetector {
     private final ProxyChannelManager channelManager;
     private final ScheduledExecutorService scheduler;
 
-    ProxyFaultDetector(ProxyCommonConfig config, ProxyAddressManager addressManager,
-                       ProxyChannelManager channelManager) {
+    public ProxyFaultDetector(ProxyCommonConfig config,
+                              ProxyAddressManager addressManager,
+                              ProxyChannelManager channelManager) {
         this.config = config;
         this.addressManager = addressManager;
         this.channelManager = channelManager;
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "ProxyFaultDetector");
-            t.setDaemon(true);
-            return t;
+        this.scheduler = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "FaultDetectorThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
     }
 
-    void start() {
+    public void start() {
         long interval = config.getFaultDetectorIntervalMillis();
-        scheduler.scheduleAtFixedRate(this::detect, interval, interval, TimeUnit.MILLISECONDS);
-    }
-
-    void shutdown() {
-        scheduler.shutdown();
-    }
-
-    void detect() {
-        try {
-            List<String> addrList = addressManager.getProxyAddrList();
-            Map<String, ProxyAddressManager.FaultItem> faultTable = addressManager.getFaultItemTable();
-
-            for (String addr : addrList) {
-                ProxyAddressManager.FaultItem item = faultTable.get(addr);
-                if (item == null) {
-                    continue;
-                }
-
-                if (!item.isAvailable()) {
-                    boolean reachable = probe(addr);
-                    if (reachable) {
-                        addressManager.markReachable(addr);
-                        log.info("Proxy fault detector: {} is reachable now, will be used after isolation expires", addr);
-                    }
-                }
+        scheduler.scheduleAtFixedRate(() -> {
+            try {
+                detect();
+            } catch (Exception e) {
+                log.error("Fault detection error", e);
             }
-        } catch (Exception e) {
-            log.error("Proxy fault detector error", e);
+        }, interval, interval, TimeUnit.MILLISECONDS);
+        log.info("Fault detector started, interval={}ms", interval);
+    }
+
+    public void shutdown() {
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 
-    private boolean probe(String addr) {
-        try {
-            ProxyChannelManager.ProbeResult result = channelManager.probe(
-                    addr,
-                    config.getConnectTimeoutMillis(),
-                    config.isTlsEnabled()
-            );
-            return result.isActive() && (!config.isTlsEnabled() || result.isTlsReady());
-        } catch (Exception e) {
-            return false;
+    public void detect() {
+        for (String addr : addressManager.getProxyAddrList()) {
+            if (!addressManager.isAvailable(addr)) {
+                ProxyChannelManager.ProbeResult result = channelManager.probe(
+                        addr, config.getConnectTimeoutMillis(), config.isTlsEnabled());
+                if (result.isActive()) {
+                    addressManager.markReachable(addr);
+                    log.info("Fault detector marked proxy as reachable: {}", addr);
+                }
+            }
         }
     }
 }

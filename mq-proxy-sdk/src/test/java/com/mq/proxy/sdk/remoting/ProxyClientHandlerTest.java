@@ -31,7 +31,7 @@ public class ProxyClientHandlerTest {
     public void setUp() {
         responseTable = new ConcurrentHashMap<>();
         processorTable = new ConcurrentHashMap<>();
-        handler = new ProxyClientHandler(responseTable, processorTable);
+        handler = new ProxyClientHandler(null, responseTable, processorTable);
         mockCtx = mock(ChannelHandlerContext.class);
         when(mockCtx.writeAndFlush(any())).thenReturn(mock(ChannelFuture.class));
     }

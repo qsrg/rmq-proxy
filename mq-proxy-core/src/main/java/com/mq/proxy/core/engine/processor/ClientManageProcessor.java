@@ -18,7 +18,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ClientManageProcessor implements RemotingProcessor {
 
@@ -27,10 +31,15 @@ public class ClientManageProcessor implements RemotingProcessor {
     private final ClientConnectionManager clientConnectionManager;
     private UpstreamConsumerSessionManager upstreamConsumerSessionManager;
     private Runnable onConsumerRegistered;
-    private final ExecutorService callbackExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "ClientManageCallback");
-        t.setDaemon(true);
-        return t;
+    private final ExecutorService callbackExecutor = new ThreadPoolExecutor(1, 1, 60L, TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(1000), new ThreadFactory() {
+        private final AtomicInteger threadNumber = new AtomicInteger(1);
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "ClientManageCallbackThread_" + threadNumber.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
     });
 
     public ClientManageProcessor(ClientConnectionManager clientConnectionManager) {

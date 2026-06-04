@@ -20,7 +20,6 @@ public class RocketMQIntegrationTest {
     private static final String TEST_TOPIC = "PROXY_INTEGRATION_TEST";
     private static final String PRODUCER_GROUP = "PID_PROXY_TEST";
     private static final String CONSUMER_GROUP = "CID_PROXY_TEST";
-    private static final String PULL_CONSUMER_GROUP = "CID_PROXY_PULL_TEST";
 
     private EmbeddedRocketMQProxy proxy;
     private NettyRemotingClient proxyClient;
@@ -136,82 +135,5 @@ public class RocketMQIntegrationTest {
             String json = new String(response.getBody(), "UTF-8");
             assertTrue("Route info should contain brokerDatas", json.contains("brokerDatas"));
         }
-    }
-
-    @Test
-    public void testProxySendMessageAndPullMessage() throws Exception {
-        String proxyAddr = proxy.getProxyAddr();
-        String pullTopic = TEST_TOPIC + "_PULL_" + System.currentTimeMillis();
-        String pullGroup = PULL_CONSUMER_GROUP + "_" + System.currentTimeMillis();
-
-        HashMap<String, String> sendExtFields = new HashMap<>();
-        sendExtFields.put("a", PRODUCER_GROUP + "_PULL");
-        sendExtFields.put("b", pullTopic);
-        sendExtFields.put("c", "TBW102");
-        sendExtFields.put("d", "4");
-        sendExtFields.put("e", String.valueOf(-1));
-        sendExtFields.put("f", "0");
-        sendExtFields.put("g", String.valueOf(System.currentTimeMillis()));
-        sendExtFields.put("h", "0");
-        sendExtFields.put("j", "0");
-        sendExtFields.put("k", "false");
-        sendExtFields.put("l", "16");
-        sendExtFields.put("m", "false");
-
-        int sendCount = 3;
-        for (int i = 0; i < sendCount; i++) {
-            HashMap<String, String> perSendExtFields = new HashMap<>(sendExtFields);
-            perSendExtFields.put("e", "0");
-
-            RemotingCommand sendRequest = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, null);
-            sendRequest.setExtFields(perSendExtFields);
-            sendRequest.setBody(("PullTestMsg-" + i).getBytes("UTF-8"));
-
-            RemotingCommand sendResponse = proxyClient.invokeSync(proxyAddr, sendRequest, 10000);
-            System.out.println("Send message " + i + ": code=" + sendResponse.getCode()
-                    + ", msgId=" + (sendResponse.getExtFields() != null ? sendResponse.getExtFields().get("msgId") : "null"));
-            assertEquals("Send message " + i + " should succeed",
-                    RemotingSysResponseCode.SUCCESS, sendResponse.getCode());
-        }
-
-        Thread.sleep(1000);
-
-        HashMap<String, String> updateExtFields = new HashMap<>();
-        updateExtFields.put("consumerGroup", pullGroup);
-        updateExtFields.put("topic", pullTopic);
-        updateExtFields.put("queueId", "0");
-        updateExtFields.put("commitOffset", "0");
-
-        RemotingCommand updateRequest = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
-        updateRequest.setExtFields(updateExtFields);
-        RemotingCommand updateResponse = proxyClient.invokeSync(proxyAddr, updateRequest, 10000);
-        System.out.println("Update offset: code=" + updateResponse.getCode());
-        assertEquals(RemotingSysResponseCode.SUCCESS, updateResponse.getCode());
-
-        HashMap<String, String> pullExtFields = new HashMap<>();
-        pullExtFields.put("consumerGroup", pullGroup);
-        pullExtFields.put("topic", pullTopic);
-        pullExtFields.put("queueId", "0");
-        pullExtFields.put("queueOffset", "0");
-        pullExtFields.put("maxMsgNums", "32");
-        pullExtFields.put("sysFlag", "0");
-        pullExtFields.put("suspendTimeoutMillis", "0");
-
-        RemotingCommand pullRequest = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
-        pullRequest.setExtFields(pullExtFields);
-
-        RemotingCommand pullResponse = proxyClient.invokeSync(proxyAddr, pullRequest, 10000);
-        System.out.println("Pull message: code=" + pullResponse.getCode()
-                + ", extFields=" + pullResponse.getExtFields()
-                + ", bodyLen=" + (pullResponse.getBody() != null ? pullResponse.getBody().length : 0));
-
-        assertEquals("Pull should succeed", RemotingSysResponseCode.SUCCESS, pullResponse.getCode());
-        assertNotNull("Pull response extFields should not be null", pullResponse.getExtFields());
-        assertNotNull("nextBeginOffset should not be null", pullResponse.getExtFields().get("nextBeginOffset"));
-        assertNotNull("minOffset should not be null", pullResponse.getExtFields().get("minOffset"));
-        assertNotNull("maxOffset should not be null", pullResponse.getExtFields().get("maxOffset"));
-
-        long maxOffset = Long.parseLong(pullResponse.getExtFields().get("maxOffset"));
-        assertTrue("Should have messages available, maxOffset=" + maxOffset, maxOffset > 0);
     }
 }

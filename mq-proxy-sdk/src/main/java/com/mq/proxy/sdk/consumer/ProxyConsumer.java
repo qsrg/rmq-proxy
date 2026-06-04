@@ -32,10 +32,12 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Proxy消费者 - 简化API，类似RocketMQ使用方式
@@ -393,10 +395,14 @@ public class ProxyConsumer {
 
     private void startHeartbeat() {
         if (heartbeatExecutor == null || heartbeatExecutor.isShutdown()) {
-            heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "Heartbeat-" + config.getConsumerGroup());
-                t.setDaemon(true);
-                return t;
+            heartbeatExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+                private final AtomicInteger threadNumber = new AtomicInteger(1);
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "HeartbeatThread_" + threadNumber.getAndIncrement());
+                    t.setDaemon(true);
+                    return t;
+                }
             });
         }
         heartbeatExecutor.scheduleAtFixedRate(() -> {

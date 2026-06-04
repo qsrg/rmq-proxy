@@ -29,11 +29,13 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyLitePullConsumer {
 
@@ -149,15 +151,23 @@ public class ProxyLitePullConsumer {
         pullConsumer.getConfig().setConsumeType("CONSUME_PASSIVELY");
         pullConsumer.setConsumerRunningInfoProvider(this::snapshotProcessQueueTable);
 
-        rebalanceExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "Rebalance-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        rebalanceExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "LiteRebalanceThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
-        pullExecutor = Executors.newScheduledThreadPool(config.getWorkerThreadNums(), r -> {
-            Thread t = new Thread(r, "Pull-" + config.getConsumerGroup());
-            t.setDaemon(true);
-            return t;
+        pullExecutor = new ScheduledThreadPoolExecutor(config.getWorkerThreadNums(), new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "LitePullThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
         });
 
         pullConsumer.registerConsumerChangeListener(new ConsumerChangeListener() {

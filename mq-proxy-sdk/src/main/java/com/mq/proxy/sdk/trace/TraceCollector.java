@@ -6,8 +6,11 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TraceCollector {
@@ -20,7 +23,16 @@ public class TraceCollector {
     
     private final BlockingQueue<TraceRecord> traceQueue = new LinkedBlockingQueue<>(10000);
     
-    private final ExecutorService traceExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService traceExecutor = new ThreadPoolExecutor(1, 1, 60L, TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(10000), new ThreadFactory() {
+        private final AtomicInteger threadNumber = new AtomicInteger(1);
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "TraceThread_" + threadNumber.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
+    });
     
     private final AtomicLong recordedCount = new AtomicLong(0);
     

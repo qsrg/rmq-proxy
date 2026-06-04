@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ProxyChannelManager {
     
@@ -19,6 +20,9 @@ public class ProxyChannelManager {
     
     private final ProxyCommonConfig config;
     private final Bootstrap bootstrap;
+    
+    private final ConcurrentHashMap<String, ChannelWrapper> channelTable = new ConcurrentHashMap<>();
+    private final ReentrantLock createChannelLock = new ReentrantLock();
 
     public static class ProbeResult {
         private final boolean active;
@@ -37,8 +41,6 @@ public class ProxyChannelManager {
             return tlsReady;
         }
     }
-    
-    private final ConcurrentHashMap<String, ChannelWrapper> channelTable = new ConcurrentHashMap<>();
     
     private static class ChannelWrapper {
         private final Channel channel;
@@ -63,18 +65,6 @@ public class ProxyChannelManager {
         public boolean isOK() {
             return channel != null && channel.isActive();
         }
-
-        public boolean isTlsHandshakeComplete() {
-            io.netty.handler.ssl.SslHandler sslHandler = channel.pipeline().get(io.netty.handler.ssl.SslHandler.class);
-            if (sslHandler == null) {
-                return true;
-            }
-            try {
-                return sslHandler.handshakeFuture().isDone() && sslHandler.handshakeFuture().isSuccess();
-            } catch (Exception e) {
-                return false;
-            }
-        }
     }
     
     public ProxyChannelManager(ProxyCommonConfig config, Bootstrap bootstrap) {
@@ -93,36 +83,51 @@ public class ProxyChannelManager {
             return cw.getChannel();
         }
 
-        return createChannel(addr, timeoutMillis);
-    }
+        try {
+            if (!createChannelLock.tryLock(config.getConnectTimeoutMillis(), TimeUnit.MILLISECONDS)) {
+                throw new ProxyConnectException(addr, "Failed to acquire channel creation lock within timeout");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProxyConnectException(addr, "Interrupted while waiting for channel creation lock");
+        }
 
+        try {
+            cw = channelTable.get(addr);
+            if (cw != null && cw.isOK()) {
+                cw.updateLastUseTime();
+                return cw.getChannel();
+            }
+            return createChannel(addr, timeoutMillis);
+        } finally {
+            createChannelLock.unlock();
+        }
+    }
+    
     private Channel createChannel(String addr, long timeoutMillis) throws ProxyConnectException {
         String[] parts = addr.split(":");
         String host = parts[0];
         int port = Integer.parseInt(parts[1]);
-
+        
         try {
             ChannelFuture future = bootstrap.connect(host, port);
-
+            
             long effectiveTimeout = Math.max(timeoutMillis, 1L);
             boolean success = future.awaitUninterruptibly(effectiveTimeout);
-
+            
             if (success && future.isSuccess()) {
                 Channel channel = future.channel();
                 ChannelWrapper cw = new ChannelWrapper(channel);
-                channelTable.put(addr, cw);
+                ChannelWrapper oldCw = channelTable.put(addr, cw);
+                if (oldCw != null && oldCw.getChannel() != null) {
+                    oldCw.getChannel().close();
+                }
                 log.info("Created channel to proxy: {}", addr);
                 return channel;
             }
-
-            if (!success) {
-                future.cancel(true);
-                throw new ProxyConnectException(addr, "Connect timed out after " + effectiveTimeout + "ms");
-            }
-
-            Throwable cause = future.cause();
-            throw new ProxyConnectException(addr, "Connect failed: " + (cause != null ? cause.getMessage() : "unknown"));
-
+            
+            throw new ProxyConnectException(addr, "Connect failed: " + future.cause().getMessage());
+            
         } catch (Exception e) {
             if (e instanceof ProxyConnectException) {
                 throw e;
@@ -161,59 +166,15 @@ public class ProxyChannelManager {
     }
 
     public boolean isChannelActive(String addr) {
-        return probe(addr, config.getConnectTimeoutMillis(), false).isActive();
-    }
-
-    public boolean isChannelTlsReady(String addr) {
-        return probe(addr, config.getConnectTimeoutMillis(), true).isTlsReady();
+        ChannelWrapper cw = channelTable.get(addr);
+        return cw != null && cw.isOK();
     }
 
     public ProbeResult probe(String addr, long timeoutMillis, boolean requireTlsReady) {
         ChannelWrapper cw = channelTable.get(addr);
         if (cw != null && cw.isOK()) {
-            boolean tlsReady = !requireTlsReady || cw.isTlsHandshakeComplete();
-            return new ProbeResult(true, tlsReady);
-        }
-        try {
-            String[] parts = addr.split(":");
-            String host = parts[0];
-            int port = Integer.parseInt(parts[1]);
-            ChannelFuture future = bootstrap.connect(host, port);
-            long effectiveTimeout = Math.max(timeoutMillis, 1L);
-            boolean success = future.awaitUninterruptibly(effectiveTimeout);
-            if (success && future.isSuccess()) {
-                Channel channel = future.channel();
-                boolean tlsReady = !requireTlsReady || waitForTlsHandshake(channel, effectiveTimeout);
-                channel.close();
-                return new ProbeResult(true, tlsReady);
-            }
-        } catch (Exception ignored) {
+            return new ProbeResult(true, true);
         }
         return new ProbeResult(false, false);
-    }
-
-    private boolean isTlsHandshakeComplete(Channel channel) {
-        io.netty.handler.ssl.SslHandler sslHandler = channel.pipeline().get(io.netty.handler.ssl.SslHandler.class);
-        if (sslHandler == null) {
-            return true;
-        }
-        try {
-            return sslHandler.handshakeFuture().isDone() && sslHandler.handshakeFuture().isSuccess();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private boolean waitForTlsHandshake(Channel channel, long timeoutMillis) {
-        io.netty.handler.ssl.SslHandler sslHandler = channel.pipeline().get(io.netty.handler.ssl.SslHandler.class);
-        if (sslHandler == null) {
-            return true;
-        }
-        try {
-            return sslHandler.handshakeFuture().awaitUninterruptibly(Math.max(timeoutMillis, 1L), TimeUnit.MILLISECONDS)
-                    && sslHandler.handshakeFuture().isSuccess();
-        } catch (Exception e) {
-            return false;
-        }
     }
 }

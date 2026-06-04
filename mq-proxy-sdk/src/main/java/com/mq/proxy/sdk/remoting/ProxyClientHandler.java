@@ -14,11 +14,14 @@ public class ProxyClientHandler extends SimpleChannelInboundHandler<RemotingComm
 
     private static final Logger log = LoggerFactory.getLogger(ProxyClientHandler.class);
 
+    private final ProxyRemotingClient remotingClient;
     private final ConcurrentHashMap<Integer, ProxyResponseFuture> responseTable;
     private final ConcurrentHashMap<Integer, SDKRequestProcessor> processorTable;
 
-    public ProxyClientHandler(ConcurrentHashMap<Integer, ProxyResponseFuture> responseTable,
+    public ProxyClientHandler(ProxyRemotingClient remotingClient,
+                              ConcurrentHashMap<Integer, ProxyResponseFuture> responseTable,
                               ConcurrentHashMap<Integer, SDKRequestProcessor> processorTable) {
+        this.remotingClient = remotingClient;
         this.responseTable = responseTable;
         this.processorTable = processorTable;
     }
@@ -76,6 +79,12 @@ public class ProxyClientHandler extends SimpleChannelInboundHandler<RemotingComm
                 ctx.writeAndFlush(response);
             }
         }
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        remotingClient.failFast(ctx.channel());
+        log.info("Channel inactive: {}", ctx.channel().remoteAddress());
     }
 
     @Override

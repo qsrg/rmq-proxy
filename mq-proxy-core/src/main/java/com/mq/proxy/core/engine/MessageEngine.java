@@ -109,6 +109,10 @@ public class MessageEngine {
             }
         }
 
+        if (virtualRouteManager != null) {
+            throw new IllegalStateException("No route info found for brokerName=" + brokerName + ", topic=" + topic);
+        }
+
         return null;
     }
 

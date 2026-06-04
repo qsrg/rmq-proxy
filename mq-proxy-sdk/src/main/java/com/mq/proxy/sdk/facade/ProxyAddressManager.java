@@ -51,7 +51,7 @@ public class ProxyAddressManager {
         }
 
         for (int i = 0; i < proxyAddrList.size(); i++) {
-            int currentIndex = Math.abs(index.incrementAndGet()) % proxyAddrList.size();
+            int currentIndex = indexToMod(index.incrementAndGet(), proxyAddrList.size());
             String addr = proxyAddrList.get(currentIndex);
 
             if (isAvailable(addr)) {
@@ -60,7 +60,7 @@ public class ProxyAddressManager {
         }
 
         for (int i = 0; i < proxyAddrList.size(); i++) {
-            int currentIndex = Math.abs(index.incrementAndGet()) % proxyAddrList.size();
+            int currentIndex = indexToMod(index.incrementAndGet(), proxyAddrList.size());
             String addr = proxyAddrList.get(currentIndex);
 
             if (isReachableButIsolated(addr)) {
@@ -129,6 +129,11 @@ public class ProxyAddressManager {
             item.setReachable(true);
             log.info("Proxy address detected reachable: {}", addr);
         }
+    }
+
+    private int indexToMod(int value, int size) {
+        int mod = value % size;
+        return mod >= 0 ? mod : mod + size;
     }
 
     private boolean isReachableButIsolated(String addr) {

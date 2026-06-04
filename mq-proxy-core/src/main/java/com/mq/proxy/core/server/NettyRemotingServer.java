@@ -33,8 +33,11 @@ import java.io.InputStream;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -73,6 +76,7 @@ public class NettyRemotingServer {
     private SslContext buildSslContext() throws Exception {
         InputStream certStream = null;
         InputStream keyStream = null;
+        InputStream trustCertStream = null;
         try {
             certStream = new FileInputStream(nettyServerConfig.getTlsCertPath());
             keyStream = new FileInputStream(nettyServerConfig.getTlsKeyPath());
@@ -83,7 +87,7 @@ public class NettyRemotingServer {
 
             if (nettyServerConfig.isTlsClientAuth()) {
                 if (nettyServerConfig.getTlsTrustCertPath() != null) {
-                    InputStream trustCertStream = new FileInputStream(nettyServerConfig.getTlsTrustCertPath());
+                    trustCertStream = new FileInputStream(nettyServerConfig.getTlsTrustCertPath());
                     builder.trustManager(trustCertStream);
                 }
                 builder.clientAuth(ClientAuth.REQUIRE);
@@ -97,6 +101,9 @@ public class NettyRemotingServer {
             if (keyStream != null) {
                 keyStream.close();
             }
+            if (trustCertStream != null) {
+                trustCertStream.close();
+            }
         }
     }
 
@@ -107,15 +114,39 @@ public class NettyRemotingServer {
     public void start() {
         this.bossGroup = new NioEventLoopGroup(this.nettyServerConfig.getBossThreadNums());
         this.workerGroup = new NioEventLoopGroup(this.nettyServerConfig.getWorkerThreadNums());
-        this.callbackExecutor = Executors.newFixedThreadPool(this.nettyServerConfig.getCallbackExecutorThreadNums());
-        this.defaultExecutor = Executors.newFixedThreadPool(
-                Runtime.getRuntime().availableProcessors() * 2,
-                r -> {
-                    Thread t = new Thread(r, "ProxyRequestProcessor");
-                    t.setDaemon(true);
-                    return t;
+        this.callbackExecutor = new ThreadPoolExecutor(
+                this.nettyServerConfig.getCallbackExecutorThreadNums(),
+                this.nettyServerConfig.getCallbackExecutorThreadNums(),
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>(10000),
+                new ThreadFactory() {
+                    private final AtomicInteger threadIndex = new AtomicInteger(0);
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        return new Thread(r, "ServerCallbackThread_" + threadIndex.incrementAndGet());
+                    }
                 });
-        this.channelScanExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.defaultExecutor = new ThreadPoolExecutor(
+                Runtime.getRuntime().availableProcessors() * 2,
+                Runtime.getRuntime().availableProcessors() * 2,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>(10000),
+                new ThreadFactory() {
+                    private final AtomicInteger threadIndex = new AtomicInteger(0);
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "ProxyRequestProcessor_" + threadIndex.incrementAndGet());
+                        t.setDaemon(true);
+                        return t;
+                    }
+                });
+        this.channelScanExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadIndex = new AtomicInteger(0);
+            @Override
+            public Thread newThread(Runnable r) {
+                return new Thread(r, "ChannelScanThread_" + threadIndex.incrementAndGet());
+            }
+        });
 
         this.serverBootstrap = new ServerBootstrap();
         this.serverBootstrap.group(this.bossGroup, this.workerGroup)
@@ -286,6 +317,7 @@ public class NettyRemotingServer {
                             RemotingCommand errorResponse = RemotingCommand.createResponseCommand(
                                     com.mq.proxy.core.protocol.RemotingSysResponseCode.SYSTEM_ERROR);
                             errorResponse.setOpaque(msg.getOpaque());
+                            errorResponse.setSerializeTypeCurrentRPC(msg.getSerializeTypeCurrentRPC());
                             errorResponse.setRemark(e.getMessage());
                             ctx.writeAndFlush(errorResponse);
                         }

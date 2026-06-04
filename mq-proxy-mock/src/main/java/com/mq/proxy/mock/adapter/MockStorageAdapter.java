@@ -10,6 +10,7 @@ import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,7 +59,7 @@ public class MockStorageAdapter implements StorageAdapter {
 
         List<InternalMessage> messageList = queueMap.get(queueId);
         if (messageList == null) {
-            messageList = new ArrayList<>();
+            messageList = Collections.synchronizedList(new ArrayList<>());
             List<InternalMessage> existing = queueMap.putIfAbsent(queueId, messageList);
             if (existing != null) {
                 messageList = existing;
@@ -80,22 +81,28 @@ public class MockStorageAdapter implements StorageAdapter {
         }
 
         List<InternalMessage> messageList = queueMap.get(queueId);
-        if (messageList == null || messageList.isEmpty()) {
+        if (messageList == null) {
             return PullResult.notFound(queueOffset, 0, 0);
         }
 
-        if (queueOffset >= messageList.size()) {
-            return PullResult.notFound(queueOffset, 0, messageList.size());
+        synchronized (messageList) {
+            if (messageList.isEmpty()) {
+                return PullResult.notFound(queueOffset, 0, 0);
+            }
+
+            if (queueOffset >= messageList.size()) {
+                return PullResult.notFound(queueOffset, 0, messageList.size());
+            }
+
+            int endIndex = (int) Math.min(queueOffset + maxMsgNums, messageList.size());
+            List<InternalMessage> messages = new ArrayList<>(messageList.subList((int) queueOffset, endIndex));
+
+            long nextBeginOffset = endIndex;
+            long minOffset = 0;
+            long maxOffset = messageList.size();
+
+            return PullResult.found(messages, nextBeginOffset, minOffset, maxOffset);
         }
-
-        int endIndex = (int) Math.min(queueOffset + maxMsgNums, messageList.size());
-        List<InternalMessage> messages = new ArrayList<>(messageList.subList((int) queueOffset, endIndex));
-
-        long nextBeginOffset = endIndex;
-        long minOffset = 0;
-        long maxOffset = messageList.size();
-
-        return PullResult.found(messages, nextBeginOffset, minOffset, maxOffset);
     }
 
     @Override

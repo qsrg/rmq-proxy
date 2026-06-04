@@ -24,8 +24,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     private StorageConfig storageConfig;
     private volatile boolean initialized = false;
 
-    private static final int FLAG_SUSPEND = 0x1 << 0;
-    private static final int FLAG_COMMIT_OFFSET = 0x1 << 1;
+    private static final int FLAG_COMMIT_OFFSET = 0x1 << 0;
+    private static final int FLAG_SUSPEND = 0x1 << 1;
     private static final int FLAG_SUBSCRIPTION = 0x1 << 2;
 
     @Override
@@ -49,6 +49,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception {
+        checkInitialized();
         SendMessageRequestHeader header = new SendMessageRequestHeader();
         header.setProducerGroup(message.getProducerGroup());
         header.setTopic(message.getTopic());
@@ -86,6 +87,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerAddr) throws Exception {
+        checkInitialized();
         PullMessageRequestHeader header = new PullMessageRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -97,6 +99,9 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
 
         int finalSysFlag = sysFlag;
+        if (commitOffset >= 0) {
+            finalSysFlag |= FLAG_COMMIT_OFFSET;
+        }
         if (suspendTimeoutMillis > 0) {
             finalSysFlag |= FLAG_SUSPEND;
         }
@@ -140,6 +145,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception {
+        checkInitialized();
         QueryConsumerOffsetRequestHeader header = new QueryConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -162,6 +168,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset, String brokerAddr) throws Exception {
+        checkInitialized();
         UpdateConsumerOffsetRequestHeader header = new UpdateConsumerOffsetRequestHeader();
         header.setConsumerGroup(consumerGroup);
         header.setTopic(topic);
@@ -186,6 +193,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     @Override
     public RemotingCommand forwardToBroker(RemotingCommand request, String brokerAddr) throws Exception {
+        checkInitialized();
         String targetAddr = resolveBrokerAddr(brokerAddr);
 
         RemotingCommand forwardRequest = RemotingCommand.createRequestCommand(request.getCode(), request.getCustomHeader());
@@ -202,5 +210,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             throw new IllegalStateException("brokerAddr is required");
         }
         return brokerAddr;
+    }
+
+    private void checkInitialized() {
+        if (!initialized) {
+            throw new IllegalStateException("RocketMQStorageAdapter is not initialized");
+        }
     }
 }

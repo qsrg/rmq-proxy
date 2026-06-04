@@ -30,9 +30,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class NettyRemotingClient {
 
@@ -48,6 +52,7 @@ public class NettyRemotingClient {
     private final AtomicInteger addressSelector = new AtomicInteger(0);
     private ExecutorService callbackExecutor;
     private final ConcurrentHashMap<Integer, RemotingProcessor> processorTable = new ConcurrentHashMap<>();
+    private final ReentrantLock createChannelLock = new ReentrantLock();
 
     public NettyRemotingClient(NettyClientConfig nettyClientConfig) {
         this.nettyClientConfig = nettyClientConfig;
@@ -102,7 +107,22 @@ public class NettyRemotingClient {
 
     public void start() {
         this.eventLoopGroup = new NioEventLoopGroup(this.nettyClientConfig.getClientWorkerThreadNums());
-        this.callbackExecutor = Executors.newFixedThreadPool(4);
+        this.callbackExecutor = new ThreadPoolExecutor(
+            nettyClientConfig.getClientCallbackExecutorThreads() > 0
+                ? nettyClientConfig.getClientCallbackExecutorThreads()
+                : 4,
+            nettyClientConfig.getClientCallbackExecutorThreads() > 0
+                ? nettyClientConfig.getClientCallbackExecutorThreads()
+                : 4,
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(10000),
+            new ThreadFactory() {
+                private final AtomicInteger threadIndex = new AtomicInteger(0);
+                @Override
+                public Thread newThread(Runnable r) {
+                    return new Thread(r, "NettyClientCallbackThread_" + threadIndex.incrementAndGet());
+                }
+            });
 
         this.bootstrap = new Bootstrap();
         this.bootstrap.group(this.eventLoopGroup)
@@ -145,16 +165,39 @@ public class NettyRemotingClient {
         if (channel != null && channel.isActive()) {
             return channel;
         }
-        int separator = addr.lastIndexOf(':');
-        if (separator <= 0 || separator == addr.length() - 1) {
-            throw new IllegalArgumentException("Invalid remote address: " + addr);
+
+        try {
+            if (!createChannelLock.tryLock(this.nettyClientConfig.getConnectTimeoutMillis(), TimeUnit.MILLISECONDS)) {
+                throw new RuntimeException("Failed to acquire channel creation lock within timeout, addr: " + addr);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while waiting for channel creation lock, addr: " + addr);
         }
-        String host = addr.substring(0, separator);
-        int port = Integer.parseInt(addr.substring(separator + 1));
-        ChannelFuture channelFuture = this.bootstrap.connect(host, port).sync();
-        channel = channelFuture.channel();
-        this.channelTable.put(addr, channel);
-        return channel;
+
+        try {
+            // double-check: lock may have been acquired after another thread already created the channel
+            channel = this.channelTable.get(addr);
+            if (channel != null && channel.isActive()) {
+                return channel;
+            }
+
+            int separator = addr.lastIndexOf(':');
+            if (separator <= 0 || separator == addr.length() - 1) {
+                throw new IllegalArgumentException("Invalid remote address: " + addr);
+            }
+            String host = addr.substring(0, separator);
+            int port = Integer.parseInt(addr.substring(separator + 1));
+            ChannelFuture channelFuture = this.bootstrap.connect(host, port).sync();
+            channel = channelFuture.channel();
+            Channel oldChannel = this.channelTable.put(addr, channel);
+            if (oldChannel != null && oldChannel != channel) {
+                oldChannel.close();
+            }
+            return channel;
+        } finally {
+            createChannelLock.unlock();
+        }
     }
 
     public RemotingCommand invokeSync(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
@@ -270,10 +313,29 @@ public class NettyRemotingClient {
             } else {
                 RemotingProcessor processor = processorTable.get(msg.getCode());
                 if (processor != null) {
-                    RemotingCommand response = processor.processRequest(ctx.channel(), msg);
-                    if (!msg.isOnewayRPC() && response != null) {
-                        response.setOpaque(msg.getOpaque());
-                        ctx.writeAndFlush(response);
+                    if (callbackExecutor != null) {
+                        final RemotingCommand finalMsg = msg;
+                        final Channel channel = ctx.channel();
+                        callbackExecutor.submit(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    RemotingCommand response = processor.processRequest(channel, finalMsg);
+                                    if (!finalMsg.isOnewayRPC() && response != null) {
+                                        response.setOpaque(finalMsg.getOpaque());
+                                        channel.writeAndFlush(response);
+                                    }
+                                } catch (Exception e) {
+                                    log.error("processRequest exception", e);
+                                }
+                            }
+                        });
+                    } else {
+                        RemotingCommand response = processor.processRequest(ctx.channel(), msg);
+                        if (!msg.isOnewayRPC() && response != null) {
+                            response.setOpaque(msg.getOpaque());
+                            ctx.writeAndFlush(response);
+                        }
                     }
                 }
             }

@@ -8,6 +8,7 @@ public class NettyClientConfig {
     private int channelNotActiveInterval = 60000;
     private int clientChannelMaxIdleTimeSeconds = 120;
     private int clientWorkerThreadNums = 4;
+    private int clientCallbackExecutorThreads = Runtime.getRuntime().availableProcessors();
 
     private boolean tlsEnabled = false;
     private String tlsTrustCertPath;
@@ -68,6 +69,14 @@ public class NettyClientConfig {
 
     public void setClientWorkerThreadNums(int clientWorkerThreadNums) {
         this.clientWorkerThreadNums = clientWorkerThreadNums;
+    }
+
+    public int getClientCallbackExecutorThreads() {
+        return clientCallbackExecutorThreads;
+    }
+
+    public void setClientCallbackExecutorThreads(int clientCallbackExecutorThreads) {
+        this.clientCallbackExecutorThreads = clientCallbackExecutorThreads;
     }
 
     public boolean isTlsEnabled() {

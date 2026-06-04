@@ -207,17 +207,19 @@ public class RemotingCommand {
             return null;
         }
 
+        int count = 0;
         int totalLen = 4;
         for (Map.Entry<String, String> entry : this.extFields.entrySet()) {
             if (entry.getKey() != null && entry.getValue() != null) {
                 byte[] keyBytes = entry.getKey().getBytes(StandardCharsets.UTF_8);
                 byte[] valueBytes = entry.getValue().getBytes(StandardCharsets.UTF_8);
                 totalLen += 4 + keyBytes.length + 4 + valueBytes.length;
+                count++;
             }
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(totalLen);
-        buffer.putInt(this.extFields.size());
+        buffer.putInt(count);
 
         for (Map.Entry<String, String> entry : this.extFields.entrySet()) {
             if (entry.getKey() != null && entry.getValue() != null) {
@@ -236,6 +238,7 @@ public class RemotingCommand {
 
     private static RemotingCommand rocketMQHeaderDecode(byte[] headerData) throws IOException {
         ByteBuffer buffer = ByteBuffer.wrap(headerData);
+        int headerLen = headerData.length;
         RemotingCommand cmd = new RemotingCommand();
 
         cmd.code = buffer.getInt();
@@ -246,6 +249,9 @@ public class RemotingCommand {
 
         int remarkLen = buffer.getInt();
         if (remarkLen > 0) {
+            if (remarkLen > headerLen) {
+                throw new IOException("RocketMQ protocol decoding failed, remark length: " + remarkLen + ", but header length: " + headerLen);
+            }
             byte[] remarkBytes = new byte[remarkLen];
             buffer.get(remarkBytes);
             cmd.remark = new String(remarkBytes, StandardCharsets.UTF_8);
@@ -253,13 +259,25 @@ public class RemotingCommand {
 
         int extFieldsLen = buffer.getInt();
         if (extFieldsLen > 0) {
+            if (extFieldsLen > headerLen) {
+                throw new IOException("RocketMQ protocol decoding failed, extFields length: " + extFieldsLen + ", but header length: " + headerLen);
+            }
             int count = buffer.getInt();
+            if (count < 0 || count > headerLen) {
+                throw new IOException("RocketMQ protocol decoding failed, extFields count: " + count + ", but header length: " + headerLen);
+            }
             cmd.extFields = new HashMap<>();
             for (int i = 0; i < count; i++) {
                 int keyLen = buffer.getInt();
+                if (keyLen < 0 || keyLen > headerLen) {
+                    throw new IOException("RocketMQ protocol decoding failed, extFields key length: " + keyLen);
+                }
                 byte[] keyBytes = new byte[keyLen];
                 buffer.get(keyBytes);
                 int valueLen = buffer.getInt();
+                if (valueLen < 0 || valueLen > headerLen) {
+                    throw new IOException("RocketMQ protocol decoding failed, extFields value length: " + valueLen);
+                }
                 byte[] valueBytes = new byte[valueLen];
                 buffer.get(valueBytes);
                 cmd.extFields.put(new String(keyBytes, StandardCharsets.UTF_8), new String(valueBytes, StandardCharsets.UTF_8));

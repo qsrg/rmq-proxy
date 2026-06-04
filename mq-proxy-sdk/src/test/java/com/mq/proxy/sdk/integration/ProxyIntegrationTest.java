@@ -114,9 +114,6 @@ public class ProxyIntegrationTest {
             assertTrue("Should contain NativeMsg-" + i, receivedBodies.contains("NativeMsg-" + i));
         }
 
-        System.out.println("Native consumer test passed, waiting 30s for console inspection...");
-        Thread.sleep(30000);
-
         producer.shutdown();
         consumer.shutdown();
     }
@@ -135,7 +132,7 @@ public class ProxyIntegrationTest {
 
         int totalMessages = 8;
         for (int i = 0; i < totalMessages; i++) {
-            SendResult result = producer.send(topic, "TagA", "SDK-Msg-" + i, ("SDK-Body-" + i).getBytes(), 0, queueId);
+            SendResult result = producer.send(topic, "TagA", "SDK-Msg-" + i, ("SDK-Body-" + i).getBytes());
             assertTrue("SDK send should succeed: " + (result.isSuccess() ? "OK" : result.getErrorMsg()), result.isSuccess());
         }
 
@@ -283,10 +280,6 @@ public class ProxyIntegrationTest {
         pushConsumer.start();
 
         boolean allReceived = latch.await(120, TimeUnit.SECONDS);
-
-        System.out.println("PushConsumer test passed, waiting 30s for console inspection...");
-        Thread.sleep(30000);
-
         pushConsumer.shutdown();
 
         assertTrue("PushConsumer should receive at least " + totalMessages + " messages, got " + receivedBodies.size(),
@@ -337,12 +330,9 @@ public class ProxyIntegrationTest {
             }
         }
 
-        assertTrue("LitePullConsumer should consume at least some messages, got " + receivedBodies.size(), receivedBodies.size() >= 1);
-
-        System.out.println("LitePullConsumer test passed, waiting 30s for console inspection...");
-        Thread.sleep(30000);
-
         liteConsumer.shutdown();
+
+        assertTrue("LitePullConsumer should consume at least some messages, got " + receivedBodies.size(), receivedBodies.size() >= 1);
     }
 
     @Test

@@ -2,7 +2,7 @@
 
 - rocketmq源码位置：/Users/wcf/java-project/rocketmq-4.9.8
 - 不确定的问题需要提问或探讨
-- rocketmq5的源码位置：/Users/wcf/java-project/**rocketmq-develop**
+- rocketmq5的源码位置：/Users/wcf/java-project/**rocketmq5**
 
 ## 本机启动rocketmq服务
 

@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 public class ClientConnectionManager {
@@ -19,8 +20,8 @@ public class ClientConnectionManager {
 
     private final ConcurrentHashMap<Channel, ClientInfo> channelClientMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Channel> clientIdChannelMap = new ConcurrentHashMap<>();
-    private final List<Consumer<Channel>> channelInactiveListeners = new ArrayList<>();
-    private final List<Consumer<ClientInfo>> clientInactiveListeners = new ArrayList<>();
+    private final List<Consumer<Channel>> channelInactiveListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<ClientInfo>> clientInactiveListeners = new CopyOnWriteArrayList<>();
 
     private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
 
@@ -103,6 +104,10 @@ public class ClientConnectionManager {
             for (Consumer<ClientInfo> listener : clientInactiveListeners) {
                 listener.accept(clientInfo);
             }
+        } else {
+            // clientInfo已被scanNotActiveChannel移除，但仍需清理可能残留的clientIdChannelMap映射
+            // 通过遍历查找该channel对应的stale entry
+            clientIdChannelMap.entrySet().removeIf(entry -> entry.getValue() == channel);
         }
         for (Consumer<Channel> listener : channelInactiveListeners) {
             listener.accept(channel);

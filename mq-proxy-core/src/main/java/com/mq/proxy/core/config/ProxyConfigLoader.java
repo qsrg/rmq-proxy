@@ -21,7 +21,7 @@ public class ProxyConfigLoader {
         ProxyConfig config = new ProxyConfig();
 
         if (props.containsKey("proxy.listenPort")) {
-            config.setListenPort(Integer.parseInt(props.getProperty("proxy.listenPort")));
+            config.setListenPort(parseInt("proxy.listenPort", props.getProperty("proxy.listenPort")));
         }
         if (props.containsKey("proxy.host")) {
             config.setProxyHost(props.getProperty("proxy.host"));
@@ -30,16 +30,16 @@ public class ProxyConfigLoader {
             config.setNamesrvAddr(props.getProperty("proxy.namesrvAddr"));
         }
         if (props.containsKey("proxy.connectTimeoutMillis")) {
-            config.setConnectTimeoutMillis(Integer.parseInt(props.getProperty("proxy.connectTimeoutMillis")));
+            config.setConnectTimeoutMillis(parseInt("proxy.connectTimeoutMillis", props.getProperty("proxy.connectTimeoutMillis")));
         }
         if (props.containsKey("proxy.bossThreadNums")) {
-            config.setBossThreadNums(Integer.parseInt(props.getProperty("proxy.bossThreadNums")));
+            config.setBossThreadNums(parseInt("proxy.bossThreadNums", props.getProperty("proxy.bossThreadNums")));
         }
         if (props.containsKey("proxy.workerThreadNums")) {
-            config.setWorkerThreadNums(Integer.parseInt(props.getProperty("proxy.workerThreadNums")));
+            config.setWorkerThreadNums(parseInt("proxy.workerThreadNums", props.getProperty("proxy.workerThreadNums")));
         }
         if (props.containsKey("proxy.routeCacheExpireMillis")) {
-            config.setRouteCacheExpireMillis(Long.parseLong(props.getProperty("proxy.routeCacheExpireMillis")));
+            config.setRouteCacheExpireMillis(parseLong("proxy.routeCacheExpireMillis", props.getProperty("proxy.routeCacheExpireMillis")));
         }
 
         if (props.containsKey("proxy.tlsEnabled")) {
@@ -59,6 +59,22 @@ public class ProxyConfigLoader {
         }
 
         return config;
+    }
+
+    private static int parseInt(String key, String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid integer value for config '" + key + "': " + value, e);
+        }
+    }
+
+    private static long parseLong(String key, String value) {
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid long value for config '" + key + "': " + value, e);
+        }
     }
 
     public static ProxyConfig loadDefault() {

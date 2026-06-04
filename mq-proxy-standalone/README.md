@@ -34,51 +34,9 @@ proxy.namesrvAddr=127.0.0.1:9876
 
 ### 4. 启动
 
-#### 方式一：使用启动脚本（推荐）
-
 ```bash
 bash bin/proxy.sh
 ```
-
-脚本自动加载 `conf/proxy.properties`，无需手动指定。
-
-#### 方式二：指定配置文件启动
-
-```bash
-java -jar mq-proxy-1.0.0-SNAPSHOT.jar -c /path/to/proxy.properties
-```
-
-#### 方式三：通过系统属性指定配置文件
-
-```bash
-java -Dproxy.config.file=/path/to/proxy.properties -jar mq-proxy-1.0.0-SNAPSHOT.jar
-```
-
-#### 方式四：系统属性覆盖单个配置项
-
-无需修改配置文件，通过 JVM 参数直接覆盖：
-
-```bash
-java -Dproxy.namesrvAddr=10.0.0.1:9876 -jar mq-proxy-1.0.0-SNAPSHOT.jar -c conf/proxy.properties
-```
-
-支持覆盖的系统属性：
-
-| 系统属性 | 对应配置项 | 说明 |
-|----------|-----------|------|
-| `proxy.namesrvAddr` | `proxy.namesrvAddr` | NameServer 地址 |
-| `proxy.listenPort` | `proxy.listenPort` | 监听端口 |
-| `proxy.host` | `proxy.host` | Proxy 自身 IP |
-
-#### 配置加载优先级
-
-从高到低：
-
-1. **系统属性覆盖**（`-Dproxy.namesrvAddr` 等）— 最高优先级，覆盖一切
-2. **命令行 `-c` 指定的配置文件**
-3. **系统属性 `proxy.config.file` 指定的配置文件**
-4. **classpath 中的 `proxy.properties`**（打包在 jar 内）
-5. **默认值**（`proxy-default.properties`）
 
 ### 5. 客户端连接
 

@@ -10,6 +10,7 @@ public class ProxyResponseFuture {
     private final int opaque;
     private final Channel channel;
     private final long timeoutMillis;
+    private final long beginTimestamp = System.currentTimeMillis();
     private final CountDownLatch latch = new CountDownLatch(1);
     
     private volatile Object response;
@@ -37,7 +38,15 @@ public class ProxyResponseFuture {
     }
     
     public boolean isTimeout() {
-        return latch.getCount() > 0;
+        return System.currentTimeMillis() - beginTimestamp > timeoutMillis;
+    }
+
+    public long getBeginTimestamp() {
+        return beginTimestamp;
+    }
+
+    public long getTimeoutMillis() {
+        return timeoutMillis;
     }
     
     public int getOpaque() {

@@ -22,9 +22,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManager {
 
@@ -61,7 +63,15 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     }
 
     public void start() {
-        this.scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.scheduledExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "BrokerHeartbeatThread_" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
+        });
         this.scheduledExecutor.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
