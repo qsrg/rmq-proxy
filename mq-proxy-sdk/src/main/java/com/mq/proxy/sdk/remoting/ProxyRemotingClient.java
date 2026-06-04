@@ -20,8 +20,14 @@ import javax.net.ssl.SSLEngine;
 import java.io.FileInputStream;
 import java.io.InputStream;
 
+import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ProxyRemotingClient {
@@ -43,10 +49,22 @@ public class ProxyRemotingClient {
 
     private final ExecutorService asyncCallbackExecutor;
 
+    private java.util.Timer timer;
+
     public ProxyRemotingClient(ProxyCommonConfig config) {
         this.config = config;
         this.eventLoopGroup = new NioEventLoopGroup(config.getWorkerThreadNums());
-        this.asyncCallbackExecutor = java.util.concurrent.Executors.newFixedThreadPool(4);
+        this.asyncCallbackExecutor = new ThreadPoolExecutor(4, 4, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(10000),
+            new ThreadFactory() {
+                private final AtomicInteger threadNumber = new AtomicInteger(1);
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "AsyncCallbackThread_" + threadNumber.getAndIncrement());
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
         if (config.isTlsEnabled()) {
             try {
                 this.sslContext = buildSslContext();
@@ -115,7 +133,7 @@ public class ProxyRemotingClient {
                  ch.pipeline()
                    .addLast(new RemotingCommandEncoder())
                    .addLast(new RemotingCommandDecoder())
-                   .addLast(new ProxyClientHandler(responseTable, processorTable));
+                   .addLast(new ProxyClientHandler(ProxyRemotingClient.this, responseTable, processorTable));
              }
          });
 
@@ -127,6 +145,17 @@ public class ProxyRemotingClient {
     }
 
     public void start() {
+        this.timer = new java.util.Timer("SDKResponseScan", true);
+        this.timer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    scanResponseTable();
+                } catch (Throwable e) {
+                    log.error("scanResponseTable exception", e);
+                }
+            }
+        }, 3000, 1000);
         log.info("ProxyRemotingClient initialized");
     }
 
@@ -184,22 +213,29 @@ public class ProxyRemotingClient {
             }
         });
 
-        asyncCallbackExecutor.execute(() -> {
-            try {
-                RemotingCommand response = (RemotingCommand) future.waitResponse();
-                if (future.getCause() != null) {
-                    callback.onException(future.getCause());
-                } else if (response == null) {
-                    callback.onException(new RuntimeException("invokeAsync timeout, opaque=" + opaque));
-                } else {
-                    callback.onSuccess(response);
+        try {
+            asyncCallbackExecutor.execute(() -> {
+                try {
+                    RemotingCommand response = (RemotingCommand) future.waitResponse();
+                    if (future.getCause() != null) {
+                        callback.onException(future.getCause());
+                    } else if (response == null) {
+                        callback.onException(new RuntimeException("invokeAsync timeout, opaque=" + opaque));
+                    } else {
+                        callback.onSuccess(response);
+                    }
+                } catch (InterruptedException e) {
+                    callback.onException(e);
+                } finally {
+                    responseTable.remove(opaque);
                 }
-            } catch (InterruptedException e) {
-                callback.onException(e);
-            } finally {
-                responseTable.remove(opaque);
-            }
-        });
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            responseTable.remove(opaque);
+            future.completeExceptionally(e);
+            callback.onException(e);
+            log.warn("invokeAsync rejected, opaque={}, executor queue full", opaque);
+        }
     }
 
     public void invokeOneway(Channel channel, RemotingCommand request) {
@@ -208,13 +244,44 @@ public class ProxyRemotingClient {
         request.setOpaque(opaque);
         channel.writeAndFlush(request).addListener(f -> {
             if (!f.isSuccess()) {
-                log.warn("invokeOneway failed, opaque={}, error={}", opaque, f.cause().getMessage());
+                log.warn("invokeOneway failed, opaque={}, error={}", opaque,
+                    f.cause() != null ? f.cause().getMessage() : "unknown");
             }
         });
     }
 
     public void shutdown() {
+        if (this.timer != null) {
+            this.timer.cancel();
+        }
         asyncCallbackExecutor.shutdown();
         eventLoopGroup.shutdownGracefully();
+    }
+
+    public void scanResponseTable() {
+        Iterator<Map.Entry<Integer, ProxyResponseFuture>> it = responseTable.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, ProxyResponseFuture> next = it.next();
+            ProxyResponseFuture future = next.getValue();
+
+            if (future.isTimeout()) {
+                it.remove();
+                future.completeExceptionally(new RuntimeException("request timeout, opaque=" + future.getOpaque()));
+                log.warn("remove timeout request, opaque={}", future.getOpaque());
+            }
+        }
+    }
+
+    public void failFast(Channel channel) {
+        Iterator<Map.Entry<Integer, ProxyResponseFuture>> it = responseTable.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, ProxyResponseFuture> entry = it.next();
+            if (entry.getValue().getChannel() == channel) {
+                it.remove();
+                entry.getValue().completeExceptionally(
+                    new RuntimeException("channel inactive, opaque=" + entry.getValue().getOpaque()));
+                log.warn("failFast: remove pending request for inactive channel, opaque={}", entry.getKey());
+            }
+        }
     }
 }
