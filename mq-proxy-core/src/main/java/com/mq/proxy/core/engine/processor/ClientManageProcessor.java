@@ -91,22 +91,14 @@ public class ClientManageProcessor implements RemotingProcessor {
                             consumerData.getMessageModel(),
                             consumerData.getConsumeFromWhere(),
                             consumerData.getSubscriptionDataSet());
-                    syncHeartbeatToBroker(clientID);
 
                     if ("BROADCASTING".equals(consumerData.getMessageModel())) {
                         log.info("Consumer group {} is BROADCASTING mode, skip rebalance notification", group);
                     }
-
-                    if (onConsumerRegistered != null) {
-                        callbackExecutor.submit(() -> {
-                            try {
-                                onConsumerRegistered.run();
-                            } catch (Exception e) {
-                                log.warn("Failed to trigger heartbeat forward after consumer registration: {}", e.getMessage());
-                            }
-                        });
-                    }
                 }
+
+                // 所有consumerData注册完成后，只同步一次心跳到broker，避免重复触发NOTIFY_CONSUMER_IDS_CHANGED
+                syncHeartbeatToBroker(clientID);
             }
         }
 

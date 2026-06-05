@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 原生 RocketMQ 消费者快速开始示例
- *
+ * <p>
  * 展示使用原生RocketMQ Push客户端通过Proxy消费消息
  */
 public class RocketMQConsumerQuickStart {
@@ -23,12 +23,11 @@ public class RocketMQConsumerQuickStart {
         System.out.println("========================================");
         System.out.println();
 
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("ConsumerGroup");
-        consumer.setNamesrvAddr("127.0.0.1:19876");
-        consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET);
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("ConsumerGroup2");
+        consumer.setNamesrvAddr("127.0.0.1:10913");
 
         try {
-            String topic = "QuickStartTopic";
+            String topic = "QuickStartTopic2";
             consumer.subscribe(topic, "*");
 
             System.out.println("消费配置:");
@@ -47,9 +46,8 @@ public class RocketMQConsumerQuickStart {
                         int count = totalConsumed.incrementAndGet();
                         String body = new String(msg.getBody());
                         System.out.println("消费消息 #" + count + ":");
-                        System.out.println("  MsgId: " + msg.getMsgId());
-                        System.out.println("  内容: " + body);
-                        System.out.println("  QueueId: " + msg.getQueueId() + ", QueueOffset: " + msg.getQueueOffset());
+                        System.out.println("  MsgId: " + msg.getMsgId() + "  内容: " + body);
+                        // System.out.println("  QueueId: " + msg.getQueueId() + ", QueueOffset: " + msg.getQueueOffset());
                     }
                     return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
                 }
@@ -59,23 +57,13 @@ public class RocketMQConsumerQuickStart {
             System.out.println("✓ Consumer 启动成功，等待消息...");
             System.out.println();
 
-            Thread.sleep(30000);
-
-            System.out.println();
-            System.out.println("========================================");
-            System.out.println("消费统计:");
-            System.out.println("  成功消费: " + totalConsumed.get() + " 条");
-            System.out.println();
-            System.out.println("✓ 消费示例完成");
             System.out.println("========================================");
 
         } catch (Exception e) {
             System.out.println("✗ 发生异常: " + e.getMessage());
             e.printStackTrace();
         } finally {
-            consumer.shutdown();
-            System.out.println();
-            System.out.println("✓ Consumer 已关闭");
+
         }
     }
 }

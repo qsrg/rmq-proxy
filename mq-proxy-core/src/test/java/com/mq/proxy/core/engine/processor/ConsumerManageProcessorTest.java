@@ -50,6 +50,26 @@ public class ConsumerManageProcessorTest {
     }
 
     @Test
+    public void testQueryConsumerOffsetUsesBrokerNameFromRequest() throws Exception {
+        when(mockAdapter.queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("broker-b")))
+                .thenReturn(OffsetResult.success(500L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "TestTopic");
+        extFields.put("queueId", "0");
+        extFields.put("bname", "broker-b");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        verify(mockAdapter).queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("broker-b"));
+    }
+
+    @Test
     public void testUpdateConsumerOffset() throws Exception {
         doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), any());
 
@@ -67,5 +87,25 @@ public class ConsumerManageProcessorTest {
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
 
         verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), any());
+    }
+
+    @Test
+    public void testUpdateConsumerOffsetUsesBrokerNameFromRequest() throws Exception {
+        doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("broker-b"));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "TestTopic");
+        extFields.put("queueId", "0");
+        extFields.put("commitOffset", "600");
+        extFields.put("bname", "broker-b");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("broker-b"));
     }
 }

@@ -114,16 +114,24 @@ public class VirtualRouteManager {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
         request.makeCustomHeaderToNet();
 
-        try {
-            RemotingCommand response = this.namesrvClient.invokeSync(this.namesrvAddr, request, 3000);
-            if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
-                parseClusterInfoAndPopulateCache(response.getBody());
-            } else {
-                log.warn("Failed to discover brokers, response code: {}", response.getCode());
+        // 支持多namesrv地址
+        String[] namesrvAddrs = this.namesrvAddr.split(";");
+        for (String addr : namesrvAddrs) {
+            String trimmedAddr = addr.trim();
+            if (trimmedAddr.isEmpty()) {
+                continue;
             }
-        } catch (Exception e) {
-            log.warn("Failed to discover brokers from NameServer: {}", e.getMessage());
+            try {
+                RemotingCommand response = this.namesrvClient.invokeSync(trimmedAddr, request, 3000);
+                if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
+                    parseClusterInfoAndPopulateCache(response.getBody());
+                    return;
+                }
+            } catch (Exception e) {
+                log.warn("discoverBrokers failed for addr={}, error={}", trimmedAddr, e.getMessage());
+            }
         }
+        log.warn("Failed to discover brokers from all NameServer addresses");
     }
 
     private void parseClusterInfoAndPopulateCache(byte[] data) {
@@ -209,15 +217,28 @@ public class VirtualRouteManager {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ROUTEINFO_BY_TOPIC, header);
         request.makeCustomHeaderToNet();
 
-        try {
-            RemotingCommand response = this.namesrvClient.invokeSync(this.namesrvAddr, request, 3000);
-            if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
-                return RouteInfoSerializer.decodeTopicRouteInfo(response.getBody());
+        // 支持多namesrv地址，用分号分隔
+        String[] namesrvAddrs = this.namesrvAddr.split(";");
+        Exception lastException = null;
+        for (String addr : namesrvAddrs) {
+            String trimmedAddr = addr.trim();
+            if (trimmedAddr.isEmpty()) {
+                continue;
             }
-            return null;
-        } catch (Exception e) {
-            return null;
+            try {
+                RemotingCommand response = this.namesrvClient.invokeSync(trimmedAddr, request, 3000);
+                if (response.getCode() == RemotingSysResponseCode.SUCCESS && response.getBody() != null) {
+                    return RouteInfoSerializer.decodeTopicRouteInfo(response.getBody());
+                }
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("fetchRouteFromNameServer failed for addr={}, topic={}, error={}", trimmedAddr, topic, e.getMessage());
+            }
         }
+        if (lastException != null) {
+            log.warn("All namesrv addresses failed for topic={}", topic);
+        }
+        return null;
     }
 
     TopicRouteInfo convertToVirtualRoute(TopicRouteInfo realRoute, String topic) {

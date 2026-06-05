@@ -10,6 +10,7 @@ public class UpdateConsumerOffsetRequestHeader implements CommandCustomHeader {
     private String topic;
     private Integer queueId;
     private Long commitOffset;
+    private String brokerName;
 
     @Override
     public void checkFields() {
@@ -29,6 +30,9 @@ public class UpdateConsumerOffsetRequestHeader implements CommandCustomHeader {
         }
         if (commitOffset != null) {
             map.put("commitOffset", String.valueOf(commitOffset));
+        }
+        if (brokerName != null) {
+            map.put("bname", brokerName);
         }
         return map;
     }
@@ -63,5 +67,13 @@ public class UpdateConsumerOffsetRequestHeader implements CommandCustomHeader {
 
     public void setCommitOffset(Long commitOffset) {
         this.commitOffset = commitOffset;
+    }
+
+    public String getBrokerName() {
+        return brokerName;
+    }
+
+    public void setBrokerName(String brokerName) {
+        this.brokerName = brokerName;
     }
 }

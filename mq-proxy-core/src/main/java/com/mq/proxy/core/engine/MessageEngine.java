@@ -9,10 +9,14 @@ import com.mq.proxy.core.storage.model.OffsetResult;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
 import com.mq.proxy.core.storage.model.TopicRouteInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 public class MessageEngine {
+
+    private static final Logger log = LoggerFactory.getLogger(MessageEngine.class);
 
     private final StorageAdapter storageAdapter;
     private VirtualRouteManager virtualRouteManager;
@@ -59,7 +63,9 @@ public class MessageEngine {
             String brokerAddr = resolveBrokerAddr(brokerName, topic);
             return storageAdapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion, brokerAddr);
         } catch (Exception e) {
-            return PullResult.notFound(0, 0, 0);
+            log.warn("pullMessage failed, fallback to notFound with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, brokerName={}, error={}",
+                    consumerGroup, topic, queueId, queueOffset, brokerName, e.getMessage());
+            return PullResult.notFound(queueOffset, 0, queueOffset);
         }
     }
 
@@ -85,6 +91,7 @@ public class MessageEngine {
         if (brokerName != null && virtualRouteManager != null) {
             String realAddr = virtualRouteManager.getRealBrokerAddr(brokerName);
             if (realAddr != null) {
+                log.debug("resolveBrokerAddr: brokerName={}, realAddr={}", brokerName, realAddr);
                 return realAddr;
             }
         }
@@ -96,6 +103,7 @@ public class MessageEngine {
                 for (TopicRouteInfo.BrokerData brokerData : brokerDatas) {
                     String realAddr = virtualRouteManager.getRealBrokerAddr(brokerData.getBrokerName());
                     if (realAddr != null) {
+                        log.debug("resolveBrokerAddr: topic={}, brokerName={}, realAddr={}", topic, brokerData.getBrokerName(), realAddr);
                         return realAddr;
                     }
                 }
@@ -105,7 +113,9 @@ public class MessageEngine {
         if (virtualRouteManager != null) {
             List<String> allBrokers = virtualRouteManager.getAllRealBrokerAddrs();
             if (!allBrokers.isEmpty()) {
-                return allBrokers.get(0);
+                String addr = allBrokers.get(0);
+                log.warn("resolveBrokerAddr: fallback to first broker, addr={}", addr);
+                return addr;
             }
         }
 

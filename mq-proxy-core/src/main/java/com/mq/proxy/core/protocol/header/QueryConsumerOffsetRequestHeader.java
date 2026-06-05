@@ -9,6 +9,7 @@ public class QueryConsumerOffsetRequestHeader implements CommandCustomHeader {
     private String consumerGroup;
     private String topic;
     private Integer queueId;
+    private String brokerName;
 
     @Override
     public void checkFields() {
@@ -25,6 +26,9 @@ public class QueryConsumerOffsetRequestHeader implements CommandCustomHeader {
         }
         if (queueId != null) {
             map.put("queueId", String.valueOf(queueId));
+        }
+        if (brokerName != null) {
+            map.put("bname", brokerName);
         }
         return map;
     }
@@ -51,5 +55,13 @@ public class QueryConsumerOffsetRequestHeader implements CommandCustomHeader {
 
     public void setQueueId(Integer queueId) {
         this.queueId = queueId;
+    }
+
+    public String getBrokerName() {
+        return brokerName;
+    }
+
+    public void setBrokerName(String brokerName) {
+        this.brokerName = brokerName;
     }
 }

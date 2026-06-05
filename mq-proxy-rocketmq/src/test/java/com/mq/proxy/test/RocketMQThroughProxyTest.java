@@ -14,10 +14,10 @@ import java.util.List;
 
 public class RocketMQThroughProxyTest {
     
-    private static final String PROXY_ADDR = "127.0.0.1:10912";
+    private static final String PROXY_ADDR = System.getProperty("proxy.addr", "127.0.0.1:10913");
     private static final String TOPIC = "TestTopic";
-    private static final String PRODUCER_GROUP = "TestProducerGroup";
-    private static final String CONSUMER_GROUP = "TestConsumerGroup";
+    private static final String PRODUCER_GROUP = "TestProducerGroup2";
+    private static final String CONSUMER_GROUP = "TestConsumerGroup2";
     
     public static void main(String[] args) throws Exception {
         System.out.println("=== RocketMQ 通过 Proxy 消息收发测试 ===");

@@ -15,10 +15,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.List;
 
 public class NameServerProcessor implements RemotingProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(NameServerProcessor.class);
+    private static final int AUTO_CREATE_TOPIC_QUEUE_NUMS = 4;
 
     private final VirtualRouteManager virtualRouteManager;
 
@@ -62,18 +64,72 @@ public class NameServerProcessor implements RemotingProcessor {
             response.setBody(body);
             return response;
         } else {
+            TopicRouteInfo defaultRoute = virtualRouteManager.getRouteInfoByTopic("TBW102");
+            if (defaultRoute != null) {
+                TopicRouteInfo topicRoute = buildFallbackRoute(requestHeader.getTopic(), defaultRoute);
+                byte[] body = RouteInfoSerializer.encodeTopicRouteInfo(topicRoute);
+                RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
+                response.setBody(body);
+                return response;
+            }
             return RemotingCommand.createResponseCommand(ResponseCode.TOPIC_NOT_EXIST, "no route info for this topic");
         }
+    }
+
+    private TopicRouteInfo buildFallbackRoute(String topic, TopicRouteInfo defaultRoute) {
+        TopicRouteInfo topicRoute = new TopicRouteInfo();
+        topicRoute.setTopic(topic);
+        topicRoute.setOrderTopicConf(defaultRoute.getOrderTopicConf());
+
+        if (defaultRoute.getQueueDatas() == null || defaultRoute.getQueueDatas().isEmpty()
+                || defaultRoute.getBrokerDatas() == null || defaultRoute.getBrokerDatas().isEmpty()) {
+            topicRoute.setQueueDatas(defaultRoute.getQueueDatas());
+            topicRoute.setBrokerDatas(defaultRoute.getBrokerDatas());
+            topicRoute.setFilterServerTable(defaultRoute.getFilterServerTable());
+            return topicRoute;
+        }
+
+        topicRoute.setQueueDatas(copyQueueDatasForAutoCreate(defaultRoute.getQueueDatas()));
+        topicRoute.setBrokerDatas(defaultRoute.getBrokerDatas());
+        topicRoute.setFilterServerTable(defaultRoute.getFilterServerTable());
+        return topicRoute;
+    }
+
+    private List<TopicRouteInfo.QueueData> copyQueueDatasForAutoCreate(List<TopicRouteInfo.QueueData> sourceQueueDatas) {
+        List<TopicRouteInfo.QueueData> queueDatas = new java.util.ArrayList<>(sourceQueueDatas.size());
+        for (TopicRouteInfo.QueueData sourceQueueData : sourceQueueDatas) {
+            TopicRouteInfo.QueueData queueData = new TopicRouteInfo.QueueData();
+            queueData.setBrokerName(sourceQueueData.getBrokerName());
+            queueData.setReadQueueNums(Math.min(sourceQueueData.getReadQueueNums(), AUTO_CREATE_TOPIC_QUEUE_NUMS));
+            queueData.setWriteQueueNums(Math.min(sourceQueueData.getWriteQueueNums(), AUTO_CREATE_TOPIC_QUEUE_NUMS));
+            queueData.setPerm(sourceQueueData.getPerm());
+            queueData.setTopicSysFlag(sourceQueueData.getTopicSysFlag());
+            queueDatas.add(queueData);
+        }
+        return queueDatas;
     }
 
     private RemotingCommand forwardToNameServer(RemotingCommand request) {
         NettyRemotingClient namesrvClient = virtualRouteManager.getNamesrvClient();
         String namesrvAddr = virtualRouteManager.getNamesrvAddr();
         if (namesrvClient != null && namesrvAddr != null) {
-            try {
-                return namesrvClient.invokeSync(namesrvAddr, request, 3000);
-            } catch (Exception e) {
-                return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, e.getMessage());
+            // 支持多namesrv地址，用分号分隔
+            String[] addrs = namesrvAddr.split(";");
+            Exception lastException = null;
+            for (String addr : addrs) {
+                String trimmedAddr = addr.trim();
+                if (trimmedAddr.isEmpty()) {
+                    continue;
+                }
+                try {
+                    return namesrvClient.invokeSync(trimmedAddr, request, 3000);
+                } catch (Exception e) {
+                    lastException = e;
+                    log.warn("forwardToNameServer failed for addr={}, error={}", trimmedAddr, e.getMessage());
+                }
+            }
+            if (lastException != null) {
+                return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, lastException.getMessage());
             }
         }
         return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, "namesrv not available");

@@ -59,7 +59,7 @@ public class PullMessageProcessor implements RemotingProcessor {
                 requestHeader.getQueueOffset() != null ? requestHeader.getQueueOffset() : 0,
                 requestHeader.getMaxMsgNums() != null ? requestHeader.getMaxMsgNums() : 32,
                 requestHeader.getSysFlag() != null ? requestHeader.getSysFlag() : 0,
-                requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : 0,
+                requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : -1,
                 requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0,
                 requestHeader.getSubscription(),
                 requestHeader.getExpressionType(),
@@ -100,6 +100,10 @@ public class PullMessageProcessor implements RemotingProcessor {
                 || pullResult.getResponseCode() == ResponseCode.PULL_RETRY_IMMEDIATELY
                 || pullResult.getResponseCode() == ResponseCode.PULL_OFFSET_MOVED) {
             response.setCode(pullResult.getResponseCode());
+        } else if (pullResult.getResponseCode() == ResponseCode.TOPIC_NOT_EXIST) {
+            response.setCode(ResponseCode.PULL_NOT_FOUND);
+            log.info("PULL_TOPIC_NOT_EXIST: originalCode={}, convertedTo=PULL_NOT_FOUND for topic={}",
+                    originalResponseCode, topic);
         } else if (pullResult.getResponseCode() == ResponseCode.SUBSCRIPTION_NOT_EXIST
                 || pullResult.getResponseCode() == ResponseCode.SUBSCRIPTION_NOT_LATEST) {
             response.setCode(ResponseCode.PULL_RETRY_IMMEDIATELY);

@@ -10,3 +10,4 @@ target/
 .classpath
 *.log
 .DS_Store
+.qoder/

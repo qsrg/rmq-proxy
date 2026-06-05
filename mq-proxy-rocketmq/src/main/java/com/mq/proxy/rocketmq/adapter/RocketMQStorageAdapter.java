@@ -17,8 +17,12 @@ import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.OffsetResult;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class RocketMQStorageAdapter implements StorageAdapter {
+
+    private static final Logger log = LoggerFactory.getLogger(RocketMQStorageAdapter.class);
 
     private NettyRemotingClient remotingClient;
     private StorageConfig storageConfig;
@@ -99,9 +103,9 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
 
         int finalSysFlag = sysFlag;
-        if (commitOffset >= 0) {
-            finalSysFlag |= FLAG_COMMIT_OFFSET;
-        }
+        // 信任消费者传入的 sysFlag，不自行设置 FLAG_COMMIT_OFFSET
+        // 消费者已在 sysFlag 中正确设置了 FLAG_COMMIT_OFFSET（仅当 commitOffset > 0 时）
+        // 之前的 commitOffset >= 0 判断会在 commitOffset=0 时强制提交 offset，导致重复消费
         if (suspendTimeoutMillis > 0) {
             finalSysFlag |= FLAG_SUSPEND;
         }
@@ -118,14 +122,40 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
+        log.info("pullMessage sending to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, sysFlag={}, commitOffset={}, suspendTimeout={}",
+            targetAddr, consumerGroup, topic, queueId, queueOffset, finalSysFlag, commitOffset, suspendTimeoutMillis);
         RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, suspendTimeoutMillis + 1000);
 
+        log.info("pullMessage response from broker: code={}, opaque={}, extFields={}, hasBody={}, serializeType={}",
+            response.getCode(), response.getOpaque(), response.getExtFields(),
+            response.getBody() != null ? response.getBody().length : 0,
+            response.getSerializeTypeCurrentRPC());
+
+        if (response.getExtFields() == null || response.getExtFields().isEmpty()) {
+            log.warn("pullMessage response from broker has EMPTY extFields! code={}, topic={}, queueId={}, queueOffset={}",
+                response.getCode(), topic, queueId, queueOffset);
+        }
+
         long nextBeginOffset = response.getExtFields() != null && response.getExtFields().get("nextBeginOffset") != null
-                ? Long.parseLong(response.getExtFields().get("nextBeginOffset")) : 0L;
+                ? Long.parseLong(response.getExtFields().get("nextBeginOffset")) : -1L;
         long minOffset = response.getExtFields() != null && response.getExtFields().get("minOffset") != null
-                ? Long.parseLong(response.getExtFields().get("minOffset")) : 0L;
+                ? Long.parseLong(response.getExtFields().get("minOffset")) : -1L;
         long maxOffset = response.getExtFields() != null && response.getExtFields().get("maxOffset") != null
-                ? Long.parseLong(response.getExtFields().get("maxOffset")) : 0L;
+                ? Long.parseLong(response.getExtFields().get("maxOffset")) : -1L;
+
+        // 当broker返回的extFields为空时（长轮询超时后PULL_NOT_FOUND常见），
+        // 使用请求的queueOffset作为nextBeginOffset，避免consumer重置offset到0导致重复消费
+        if (nextBeginOffset == -1L) {
+            nextBeginOffset = queueOffset;
+            log.warn("pullMessage broker response missing nextBeginOffset, using queueOffset={} as fallback. topic={}, queueId={}",
+                queueOffset, topic, queueId);
+        }
+        if (minOffset == -1L) {
+            minOffset = 0;
+        }
+        if (maxOffset == -1L) {
+            maxOffset = queueOffset;
+        }
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             return PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);

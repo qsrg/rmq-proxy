@@ -197,4 +197,64 @@ public class PullMessageProcessorTest {
         verify(mockAdapter).pullMessage(eq("orderlyGroup"), eq("OrderlyTopic"), eq(2), eq(100L), eq(32),
                 eq(3), eq(500L), anyLong(), any(), any(), anyLong(), any());
     }
+
+    @Test
+    public void testPullMessageTopicNotExistIsConvertedToNotFound() throws Exception {
+        PullResult pullResult = new PullResult();
+        pullResult.setResponseCode(ResponseCode.TOPIC_NOT_EXIST);
+        pullResult.setNextBeginOffset(0L);
+        pullResult.setMinOffset(0L);
+        pullResult.setMaxOffset(0L);
+
+        when(mockAdapter.pullMessage(eq("testGroup"), eq("NewTopic"), eq(0), eq(0L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), any()))
+                .thenReturn(pullResult);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "NewTopic");
+        extFields.put("queueId", "0");
+        extFields.put("queueOffset", "0");
+        extFields.put("maxMsgNums", "32");
+        extFields.put("sysFlag", "4");
+        extFields.put("commitOffset", "0");
+        extFields.put("suspendTimeoutMillis", "15000");
+        extFields.put("subVersion", String.valueOf(System.currentTimeMillis()));
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
+        assertEquals("0", response.getExtFields().get("nextBeginOffset"));
+        assertEquals("0", response.getExtFields().get("minOffset"));
+        assertEquals("0", response.getExtFields().get("maxOffset"));
+    }
+
+    @Test
+    public void testPullMessageExceptionPreservesRequestedOffset() throws Exception {
+        when(mockAdapter.pullMessage(eq("testGroup"), eq("TestTopic"), eq(0), eq(5L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), any()))
+                .thenThrow(new RuntimeException("timeout"));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "TestTopic");
+        extFields.put("queueId", "0");
+        extFields.put("queueOffset", "5");
+        extFields.put("maxMsgNums", "32");
+        extFields.put("sysFlag", "3");
+        extFields.put("commitOffset", "5");
+        extFields.put("suspendTimeoutMillis", "15000");
+        extFields.put("subVersion", String.valueOf(System.currentTimeMillis()));
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
+        assertEquals("5", response.getExtFields().get("nextBeginOffset"));
+    }
 }

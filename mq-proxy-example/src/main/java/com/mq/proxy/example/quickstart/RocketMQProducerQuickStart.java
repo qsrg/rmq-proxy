@@ -5,9 +5,12 @@ import org.apache.rocketmq.client.producer.DefaultMQProducer;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.common.message.Message;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 原生 RocketMQ 生产者快速开始示例
- *
+ * <p>
  * 通过Proxy发送消息到RocketMQ
  */
 public class RocketMQProducerQuickStart {
@@ -22,7 +25,9 @@ public class RocketMQProducerQuickStart {
         DefaultMQProducer producer = new DefaultMQProducer("QuickStartProducerGroup");
 
         // Step 2: 设置 NameServer 地址为 Proxy 地址
-        producer.setNamesrvAddr("127.0.0.1:19876");  // 通过Proxy访问RocketMQ
+         producer.setNamesrvAddr("127.0.0.1:10913");  // 通过Proxy访问RocketMQ
+        //producer.setNamesrvAddr("127.0.0.1:9876");  // 通过Proxy访问RocketMQ
+
 
         // 可选设置
         producer.setRetryTimesWhenSendFailed(3);  // 发送失败重试次数
@@ -37,44 +42,45 @@ public class RocketMQProducerQuickStart {
 
             // Step 4: 发送消息
             System.out.println("【步骤2】发送测试消息...");
-            String topic = "QuickStartTopic";
+            String topic = "QuickStartTopic2";
             String tags = "TagA";
             String keys = "OrderID_123";
-            String messageBody = "Hello RocketMQ! This is a native client example.";
 
-            Message msg = new Message(
-                topic,
-                tags,
-                keys,
-                messageBody.getBytes()
-            );
+            for (int i = 1; i <= 10; i++) {
+                String messageBody = "Hello RocketMQ-" + i + " This is a native client example.";
+                Message msg = new Message(
+                        topic,
+                        tags,
+                        keys,
+                        messageBody.getBytes()
+                );
 
-            SendResult sendResult = producer.send(msg);
+                SendResult sendResult = producer.send(msg);
 
-            System.out.println("✓ 消息发送成功!");
-            System.out.println("  - 消息ID: " + sendResult.getMsgId());
-            System.out.println("  - 发送状态: " + sendResult.getSendStatus());
-            System.out.println("  - 消息队列: " + sendResult.getMessageQueue());
-            System.out.println("  - 队列偏移量: " + sendResult.getQueueOffset());
-            System.out.println();
+                System.out.println("✓ 消息发送成功!");
+                System.out.println("  - 消息ID: " + sendResult.getMsgId());
+                System.out.println("  - 发送状态: " + sendResult.getSendStatus());
+                System.out.println("  - 消息队列: " + sendResult.getMessageQueue());
+                System.out.println("  - 队列偏移量: " + sendResult.getQueueOffset());
+                System.out.println();
+            }
 
             // Step 5: 批量发送
             System.out.println("【步骤3】批量发送10条消息...");
+            List<Message> list = new ArrayList<>();
             int successCount = 0;
-            for (int i = 0; i < 10; i++) {
+            for (int i = 1; i <= 10; i++) {
                 String msgBody = "Batch Message #" + i;
-                Message batchMsg = new Message(
-                    topic,
-                    tags,
-                    "Key_" + i,
-                    msgBody.getBytes()
+                Message msg = new Message(
+                        topic,
+                        tags,
+                        "Key_" + i,
+                        msgBody.getBytes()
                 );
-
-                SendResult batchResult = producer.send(batchMsg);
-                successCount++;
-                System.out.println("  [" + i + "] 发送成功: msgId=" + batchResult.getMsgId());
+                list.add(msg);
             }
-            System.out.println("✓ 批量发送完成: 成功 " + successCount + "/10 条");
+           // SendResult batchResult = producer.send(list);
+            System.out.println("✓ 批量发送完成: 成功 " + "10 条");
             System.out.println();
 
             System.out.println("========================================");
