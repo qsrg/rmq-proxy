@@ -13,12 +13,6 @@
     <artifactId>mq-proxy-example</artifactId>
 
     <dependencies>
-        <!-- Proxy SDK -->
-        <dependency>
-            <groupId>com.mq.proxy</groupId>
-            <artifactId>mq-proxy-sdk</artifactId>
-        </dependency>
-
         <!-- 原生 RocketMQ Client -->
         <dependency>
             <groupId>org.apache.rocketmq</groupId>
