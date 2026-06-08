@@ -132,6 +132,25 @@ public class ConsumerManageProcessor implements RemotingProcessor {
     }
 
     private String resolveBrokerName(String topic, int queueId, RemotingCommand request) {
+        String requestBrokerName = getRequestBrokerName(request);
+        if (requestBrokerName != null) {
+            return requestBrokerName;
+        }
+
+        if (isRetryOrDlqTopic(topic) && this.virtualRouteManager != null) {
+            this.virtualRouteManager.getRouteInfoByTopic(topic);
+            String brokerName = this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
+            if (brokerName != null && !brokerName.isEmpty()) {
+                return brokerName;
+            }
+        }
+        if (this.virtualRouteManager != null) {
+            return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
+        }
+        return null;
+    }
+
+    private String getRequestBrokerName(RemotingCommand request) {
         if (request.getCustomHeader() instanceof QueryConsumerOffsetRequestHeader) {
             String brokerName = ((QueryConsumerOffsetRequestHeader) request.getCustomHeader()).getBrokerName();
             if (brokerName != null && !brokerName.isEmpty()) {
@@ -150,9 +169,10 @@ public class ConsumerManageProcessor implements RemotingProcessor {
                 return bname;
             }
         }
-        if (this.virtualRouteManager != null) {
-            return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
-        }
         return null;
+    }
+
+    private boolean isRetryOrDlqTopic(String topic) {
+        return topic != null && (topic.startsWith("%RETRY%") || topic.startsWith("%DLQ%"));
     }
 }

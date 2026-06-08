@@ -15,12 +15,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
-import java.util.List;
 
 public class NameServerProcessor implements RemotingProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(NameServerProcessor.class);
-    private static final int AUTO_CREATE_TOPIC_QUEUE_NUMS = 4;
 
     private final VirtualRouteManager virtualRouteManager;
 
@@ -63,50 +61,8 @@ public class NameServerProcessor implements RemotingProcessor {
             RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
             response.setBody(body);
             return response;
-        } else {
-            TopicRouteInfo defaultRoute = virtualRouteManager.getRouteInfoByTopic("TBW102");
-            if (defaultRoute != null) {
-                TopicRouteInfo topicRoute = buildFallbackRoute(requestHeader.getTopic(), defaultRoute);
-                byte[] body = RouteInfoSerializer.encodeTopicRouteInfo(topicRoute);
-                RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
-                response.setBody(body);
-                return response;
-            }
-            return RemotingCommand.createResponseCommand(ResponseCode.TOPIC_NOT_EXIST, "no route info for this topic");
         }
-    }
-
-    private TopicRouteInfo buildFallbackRoute(String topic, TopicRouteInfo defaultRoute) {
-        TopicRouteInfo topicRoute = new TopicRouteInfo();
-        topicRoute.setTopic(topic);
-        topicRoute.setOrderTopicConf(defaultRoute.getOrderTopicConf());
-
-        if (defaultRoute.getQueueDatas() == null || defaultRoute.getQueueDatas().isEmpty()
-                || defaultRoute.getBrokerDatas() == null || defaultRoute.getBrokerDatas().isEmpty()) {
-            topicRoute.setQueueDatas(defaultRoute.getQueueDatas());
-            topicRoute.setBrokerDatas(defaultRoute.getBrokerDatas());
-            topicRoute.setFilterServerTable(defaultRoute.getFilterServerTable());
-            return topicRoute;
-        }
-
-        topicRoute.setQueueDatas(copyQueueDatasForAutoCreate(defaultRoute.getQueueDatas()));
-        topicRoute.setBrokerDatas(defaultRoute.getBrokerDatas());
-        topicRoute.setFilterServerTable(defaultRoute.getFilterServerTable());
-        return topicRoute;
-    }
-
-    private List<TopicRouteInfo.QueueData> copyQueueDatasForAutoCreate(List<TopicRouteInfo.QueueData> sourceQueueDatas) {
-        List<TopicRouteInfo.QueueData> queueDatas = new java.util.ArrayList<>(sourceQueueDatas.size());
-        for (TopicRouteInfo.QueueData sourceQueueData : sourceQueueDatas) {
-            TopicRouteInfo.QueueData queueData = new TopicRouteInfo.QueueData();
-            queueData.setBrokerName(sourceQueueData.getBrokerName());
-            queueData.setReadQueueNums(Math.min(sourceQueueData.getReadQueueNums(), AUTO_CREATE_TOPIC_QUEUE_NUMS));
-            queueData.setWriteQueueNums(Math.min(sourceQueueData.getWriteQueueNums(), AUTO_CREATE_TOPIC_QUEUE_NUMS));
-            queueData.setPerm(sourceQueueData.getPerm());
-            queueData.setTopicSysFlag(sourceQueueData.getTopicSysFlag());
-            queueDatas.add(queueData);
-        }
-        return queueDatas;
+        return RemotingCommand.createResponseCommand(ResponseCode.TOPIC_NOT_EXIST, "no route info for this topic");
     }
 
     private RemotingCommand forwardToNameServer(RemotingCommand request) {
@@ -146,5 +102,9 @@ public class NameServerProcessor implements RemotingProcessor {
             header.setTopic(extFields.get("topic"));
         }
         return header;
+    }
+
+    private boolean isRetryOrDlqTopic(String topic) {
+        return topic != null && (topic.startsWith("%RETRY%") || topic.startsWith("%DLQ%"));
     }
 }

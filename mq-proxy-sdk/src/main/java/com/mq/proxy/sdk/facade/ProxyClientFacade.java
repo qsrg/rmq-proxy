@@ -105,12 +105,14 @@ public class ProxyClientFacade {
 
             } catch (Exception e) {
                 long elapsed = System.currentTimeMillis() - startTime;
-                long faultLatency = elapsed;
-                if (isConnectionException(e)) {
-                    faultLatency = 10000L;
+                if (!isRequestTimeoutException(e)) {
+                    long faultLatency = elapsed;
+                    if (isConnectionException(e)) {
+                        faultLatency = 10000L;
+                    }
+                    addressManager.markFault(proxyAddr, faultLatency);
+                    channelManager.closeChannel(proxyAddr);
                 }
-                addressManager.markFault(proxyAddr, faultLatency);
-                channelManager.closeChannel(proxyAddr);
 
                 metricsCollector.recordFailure(proxyAddr, e);
 
@@ -210,6 +212,18 @@ public class ProxyClientFacade {
                 return true;
             }
             if (matchConnectionMessage(current.getMessage())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private boolean isRequestTimeoutException(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && msg.toLowerCase().contains("request timeout")) {
                 return true;
             }
             current = current.getCause();

@@ -210,6 +210,48 @@ public class VirtualRouteManagerTest {
         );
     }
 
+    @Test
+    public void testRetryTopicRouteStaysStableWithinCacheWindow() {
+        RecordingNettyRemotingClient namesrvClient = new RecordingNettyRemotingClient();
+        namesrvClient.willReturn("171.31.208.1:9876",
+                createSuccessResponse(RouteInfoSerializer.encodeTopicRouteInfo(createRoute("%RETRY%GroupA", "broker-b", "192.168.1.2:10911"))));
+        namesrvClient.willReturn("171.31.208.1:9876",
+                createSuccessResponse(RouteInfoSerializer.encodeTopicRouteInfo(createRoute("%RETRY%GroupA", "broker-a", "192.168.1.1:10911"))));
+
+        VirtualRouteManager manager = new VirtualRouteManager(namesrvClient);
+        manager.start("171.31.208.1:9876", "10.0.0.1", 8080);
+
+        TopicRouteInfo first = manager.getRouteInfoByTopic("%RETRY%GroupA");
+        TopicRouteInfo second = manager.getRouteInfoByTopic("%RETRY%GroupA");
+
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("broker-b", first.getQueueDatas().get(0).getBrokerName());
+        assertEquals("broker-b", second.getQueueDatas().get(0).getBrokerName());
+        assertEquals(Collections.singletonList("171.31.208.1:9876"), namesrvClient.getInvokedAddrs());
+    }
+
+    private static TopicRouteInfo createRoute(String topic, String brokerName, String brokerAddr) {
+        TopicRouteInfo routeInfo = new TopicRouteInfo();
+        routeInfo.setTopic(topic);
+
+        TopicRouteInfo.QueueData queueData = new TopicRouteInfo.QueueData();
+        queueData.setBrokerName(brokerName);
+        queueData.setReadQueueNums(1);
+        queueData.setWriteQueueNums(1);
+        queueData.setPerm(6);
+        routeInfo.setQueueDatas(Collections.singletonList(queueData));
+
+        TopicRouteInfo.BrokerData brokerData = new TopicRouteInfo.BrokerData();
+        brokerData.setBrokerName(brokerName);
+        Map<Long, String> brokerAddrs = new HashMap<>();
+        brokerAddrs.put(0L, brokerAddr);
+        brokerData.setBrokerAddrs(brokerAddrs);
+        routeInfo.setBrokerDatas(Collections.singletonList(brokerData));
+        routeInfo.setFilterServerTable(new HashMap<String, List<String>>());
+        return routeInfo;
+    }
+
     private static RemotingCommand createSuccessResponse(byte[] body) {
         RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS);
         response.setBody(body);

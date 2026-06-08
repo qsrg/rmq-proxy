@@ -44,7 +44,8 @@ public class PullMessageProcessor implements RemotingProcessor {
         int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
         String brokerName = resolveBrokerName(topic, queueId, request);
 
-        log.info("PULL_REQUEST: group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
+        log.info("PULL_REQUEST: opaque={}, group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
+                request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(),
                 requestHeader.getSysFlag(), requestHeader.getCommitOffset(),
@@ -67,7 +68,8 @@ public class PullMessageProcessor implements RemotingProcessor {
                 brokerName
         );
 
-        log.info("PULL_RESULT: group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
+        log.info("PULL_RESULT: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
+                request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 pullResult.getResponseCode(), pullResult.getNextBeginOffset(),
                 pullResult.getMinOffset(), pullResult.getMaxOffset(),
@@ -111,7 +113,8 @@ public class PullMessageProcessor implements RemotingProcessor {
             log.info("PULL_SUBSCRIPTION_ISSUE: originalCode={}, convertedTo=PULL_RETRY_IMMEDIATELY, triggered heartbeat", originalResponseCode);
         }
 
-        log.info("PULL_RESPONSE: group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
+        log.info("PULL_RESPONSE: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
+                request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 response.getCode(), responseHeader.getNextBeginOffset(),
                 responseHeader.getMinOffset(), responseHeader.getMaxOffset());
@@ -199,15 +202,35 @@ public class PullMessageProcessor implements RemotingProcessor {
     }
 
     private String resolveBrokerName(String topic, int queueId, RemotingCommand request) {
-        if (request.getExtFields() != null) {
-            String bname = request.getExtFields().get("bname");
-            if (bname != null && !bname.isEmpty()) {
-                return bname;
+        String requestBrokerName = getRequestBrokerName(request);
+        if (requestBrokerName != null) {
+            return requestBrokerName;
+        }
+
+        if (isRetryOrDlqTopic(topic) && this.virtualRouteManager != null) {
+            this.virtualRouteManager.getRouteInfoByTopic(topic);
+            String brokerName = this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
+            if (brokerName != null && !brokerName.isEmpty()) {
+                return brokerName;
             }
         }
         if (this.virtualRouteManager != null) {
             return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(topic, queueId);
         }
         return null;
+    }
+
+    private String getRequestBrokerName(RemotingCommand request) {
+        if (request.getExtFields() != null) {
+            String bname = request.getExtFields().get("bname");
+            if (bname != null && !bname.isEmpty()) {
+                return bname;
+            }
+        }
+        return null;
+    }
+
+    private boolean isRetryOrDlqTopic(String topic) {
+        return topic != null && (topic.startsWith("%RETRY%") || topic.startsWith("%DLQ%"));
     }
 }

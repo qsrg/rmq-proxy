@@ -48,7 +48,7 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
                 requestHeader.getGroup(), requestHeader.getOffset(), requestHeader.getDelayLevel(),
                 requestHeader.getOriginTopic(), brokerName);
 
-        RemotingCommand forwardRequest = buildForwardRequest(requestHeader);
+        RemotingCommand forwardRequest = buildForwardRequest(requestHeader, request, brokerName);
         forwardRequest.setBody(request.getBody());
 
         try {
@@ -113,10 +113,18 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
         return null;
     }
 
-    private RemotingCommand buildForwardRequest(ConsumerSendMsgBackRequestHeader header) {
+    private RemotingCommand buildForwardRequest(ConsumerSendMsgBackRequestHeader header, RemotingCommand originalRequest, String brokerName) {
         RemotingCommand forwardRequest = RemotingCommand.createRequestCommand(
                 RequestCode.CONSUMER_SEND_MSG_BACK, header);
         forwardRequest.makeCustomHeaderToNet();
+        HashMap<String, String> extFields = new HashMap<>();
+        if (originalRequest.getExtFields() != null) {
+            extFields.putAll(originalRequest.getExtFields());
+        }
+        if (brokerName != null && !brokerName.isEmpty()) {
+            extFields.put("bname", brokerName);
+        }
+        forwardRequest.setExtFields(extFields);
         return forwardRequest;
     }
 }

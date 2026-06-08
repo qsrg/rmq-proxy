@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.MessageEngine;
+import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
@@ -18,11 +19,13 @@ public class ConsumerManageProcessorTest {
 
     private MessageEngine messageEngine;
     private StorageAdapter mockAdapter;
+    private VirtualRouteManager routeManager;
     private ConsumerManageProcessor processor;
 
     @Before
     public void setUp() {
         mockAdapter = mock(StorageAdapter.class);
+        routeManager = mock(VirtualRouteManager.class);
         messageEngine = new MessageEngine(mockAdapter);
         processor = new ConsumerManageProcessor(messageEngine);
     }
@@ -51,7 +54,10 @@ public class ConsumerManageProcessorTest {
 
     @Test
     public void testQueryConsumerOffsetUsesBrokerNameFromRequest() throws Exception {
-        when(mockAdapter.queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("broker-b")))
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+        when(routeManager.getRealBrokerAddr("broker-b")).thenReturn("192.168.1.2:10911");
+        when(mockAdapter.queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("192.168.1.2:10911")))
                 .thenReturn(OffsetResult.success(500L));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, null);
@@ -66,7 +72,8 @@ public class ConsumerManageProcessorTest {
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-        verify(mockAdapter).queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("broker-b"));
+        verify(routeManager).getRealBrokerAddr("broker-b");
+        verify(mockAdapter).queryConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq("192.168.1.2:10911"));
     }
 
     @Test
@@ -91,7 +98,10 @@ public class ConsumerManageProcessorTest {
 
     @Test
     public void testUpdateConsumerOffsetUsesBrokerNameFromRequest() throws Exception {
-        doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("broker-b"));
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+        when(routeManager.getRealBrokerAddr("broker-b")).thenReturn("192.168.1.2:10911");
+        doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("192.168.1.2:10911"));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
         HashMap<String, String> extFields = new HashMap<>();
@@ -106,6 +116,55 @@ public class ConsumerManageProcessorTest {
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-        verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("broker-b"));
+        verify(routeManager).getRealBrokerAddr("broker-b");
+        verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("TestTopic"), eq(0), eq(600L), eq("192.168.1.2:10911"));
+    }
+
+    @Test
+    public void testRetryTopicQueryConsumerOffsetHonorsRequestBrokerWhenPresent() throws Exception {
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+        when(routeManager.findBrokerNameByTopicAndQueueId("%RETRY%testGroup", 0)).thenReturn("broker-a");
+        when(routeManager.getRealBrokerAddr("broker-b")).thenReturn("192.168.1.3:10911");
+        when(mockAdapter.queryConsumerOffset(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq("192.168.1.3:10911")))
+                .thenReturn(OffsetResult.success(123L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.QUERY_CONSUMER_OFFSET, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "%RETRY%testGroup");
+        extFields.put("queueId", "0");
+        extFields.put("bname", "broker-b");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        verify(mockAdapter).queryConsumerOffset(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq("192.168.1.3:10911"));
+    }
+
+    @Test
+    public void testRetryTopicUpdateConsumerOffsetHonorsRequestBrokerWhenPresent() throws Exception {
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+        when(routeManager.findBrokerNameByTopicAndQueueId("%RETRY%testGroup", 0)).thenReturn("broker-a");
+        when(routeManager.getRealBrokerAddr("broker-b")).thenReturn("192.168.1.3:10911");
+        doNothing().when(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(456L), eq("192.168.1.3:10911"));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_CONSUMER_OFFSET, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "%RETRY%testGroup");
+        extFields.put("queueId", "0");
+        extFields.put("commitOffset", "456");
+        extFields.put("bname", "broker-b");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
+        verify(mockAdapter).updateConsumerOffset(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(456L), eq("192.168.1.3:10911"));
     }
 }

@@ -1,6 +1,7 @@
 package com.mq.proxy.core.engine.processor;
 
 import com.mq.proxy.core.engine.MessageEngine;
+import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
@@ -256,5 +257,72 @@ public class PullMessageProcessorTest {
         assertNotNull(response);
         assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
         assertEquals("5", response.getExtFields().get("nextBeginOffset"));
+    }
+
+    @Test
+    public void testRetryTopicPullUsesFreshRouteWhenRequestBrokerMissing() throws Exception {
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+
+        when(routeManager.findBrokerNameByTopicAndQueueId("%RETRY%testGroup", 0)).thenReturn("broker-a");
+        when(routeManager.getRealBrokerAddr("broker-a")).thenReturn("127.0.0.1:10911");
+        when(mockAdapter.pullMessage(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(0L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), eq("127.0.0.1:10911")))
+                .thenReturn(PullResult.notFound(0L, 0L, 0L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "%RETRY%testGroup");
+        extFields.put("queueId", "0");
+        extFields.put("queueOffset", "0");
+        extFields.put("maxMsgNums", "32");
+        extFields.put("sysFlag", "4");
+        extFields.put("commitOffset", "0");
+        extFields.put("suspendTimeoutMillis", "15000");
+        extFields.put("subVersion", String.valueOf(System.currentTimeMillis()));
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
+        verify(mockAdapter).pullMessage(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(0L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), eq("127.0.0.1:10911"));
+    }
+
+    @Test
+    public void testRetryTopicPullHonorsRequestBrokerWhenPresent() throws Exception {
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        messageEngine.setVirtualRouteManager(routeManager);
+        processor.setVirtualRouteManager(routeManager);
+
+        when(routeManager.findBrokerNameByTopicAndQueueId("%RETRY%testGroup", 0)).thenReturn("broker-a");
+        when(routeManager.getRealBrokerAddr("broker-b")).thenReturn("127.0.0.1:20911");
+        when(mockAdapter.pullMessage(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(0L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), eq("127.0.0.1:20911")))
+                .thenReturn(PullResult.notFound(0L, 0L, 0L));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("consumerGroup", "testGroup");
+        extFields.put("topic", "%RETRY%testGroup");
+        extFields.put("queueId", "0");
+        extFields.put("queueOffset", "0");
+        extFields.put("maxMsgNums", "32");
+        extFields.put("sysFlag", "4");
+        extFields.put("commitOffset", "0");
+        extFields.put("suspendTimeoutMillis", "15000");
+        extFields.put("subVersion", String.valueOf(System.currentTimeMillis()));
+        extFields.put("bname", "broker-b");
+        request.setExtFields(extFields);
+
+        RemotingCommand response = processor.processRequest(null, request);
+
+        assertNotNull(response);
+        assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
+        verify(mockAdapter).pullMessage(eq("testGroup"), eq("%RETRY%testGroup"), eq(0), eq(0L), eq(32),
+                anyInt(), anyLong(), anyLong(), any(), any(), anyLong(), eq("127.0.0.1:20911"));
     }
 }

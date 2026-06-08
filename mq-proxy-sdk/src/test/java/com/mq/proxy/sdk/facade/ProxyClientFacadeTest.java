@@ -298,7 +298,7 @@ public class ProxyClientFacadeTest {
         int threadCount = 10;
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch endLatch = new CountDownLatch(threadCount);
-        final int[] successCount = {0};
+        AtomicInteger successCount = new AtomicInteger(0);
 
         for (int i = 0; i < threadCount; i++) {
             new Thread(() -> {
@@ -306,7 +306,7 @@ public class ProxyClientFacadeTest {
                     startLatch.await();
                     RemotingCommand response = facade.invokeSync(request, 3000);
                     if (response != null && response.getCode() == 200) {
-                        successCount[0]++;
+                        successCount.incrementAndGet();
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -320,7 +320,7 @@ public class ProxyClientFacadeTest {
         boolean finished = endLatch.await(10, TimeUnit.SECONDS);
 
         assertTrue(finished);
-        assertEquals(threadCount, successCount[0]);
+        assertEquals(threadCount, successCount.get());
         verify(mockRemotingClient, times(threadCount)).invokeSync(any(Channel.class), eq(request), anyLong());
     }
 

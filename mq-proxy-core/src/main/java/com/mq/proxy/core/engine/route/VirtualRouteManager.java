@@ -71,7 +71,7 @@ public class VirtualRouteManager {
 
         TopicRouteInfo realRoute = fetchRouteFromNameServer(topic);
         if (realRoute == null) {
-            return null;
+            return cached;
         }
 
         TopicRouteInfo virtualRoute = convertToVirtualRoute(realRoute, topic);
@@ -111,6 +111,11 @@ public class VirtualRouteManager {
     }
 
     public void discoverBrokers() {
+        if (this.namesrvAddr == null || this.namesrvAddr.trim().isEmpty()) {
+            log.warn("discoverBrokers skipped because namesrvAddr is not configured");
+            return;
+        }
+
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
         request.makeCustomHeaderToNet();
 
@@ -210,7 +215,16 @@ public class VirtualRouteManager {
         return (System.currentTimeMillis() - timestamp) > this.routeCacheExpireMillis;
     }
 
+    private boolean isRetryOrDlqTopic(String topic) {
+        return topic != null && (topic.startsWith("%RETRY%") || topic.startsWith("%DLQ%"));
+    }
+
     private TopicRouteInfo fetchRouteFromNameServer(String topic) {
+        if (this.namesrvAddr == null || this.namesrvAddr.trim().isEmpty()) {
+            log.warn("fetchRouteFromNameServer skipped because namesrvAddr is not configured, topic={}", topic);
+            return null;
+        }
+
         GetRouteInfoRequestHeader header = new GetRouteInfoRequestHeader();
         header.setTopic(topic);
 

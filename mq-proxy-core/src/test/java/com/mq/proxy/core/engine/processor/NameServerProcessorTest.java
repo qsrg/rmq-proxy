@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -57,10 +56,9 @@ public class NameServerProcessorTest {
     }
 
     @Test
-    public void testMissingTopicFallbackRouteUsesAllBrokerQueues() throws Exception {
+    public void testMissingTopicReturnsTopicNotExist() throws Exception {
         VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
         when(routeManager.getRouteInfoByTopic("MissingTopic")).thenReturn(null);
-        when(routeManager.getRouteInfoByTopic("TBW102")).thenReturn(createDefaultTopicRoute());
 
         NameServerProcessor processor = new NameServerProcessor(routeManager);
         RemotingCommand request = RemotingCommand.createRequestCommand(
@@ -76,21 +74,29 @@ public class NameServerProcessorTest {
 
         RemotingCommand response = processor.processRequest(channel, request);
 
-        assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-        assertNotNull(response.getBody());
+        assertEquals(com.mq.proxy.core.protocol.ResponseCode.TOPIC_NOT_EXIST, response.getCode());
+    }
 
-        TopicRouteInfo routeInfo = RouteInfoSerializer.decodeTopicRouteInfo(response.getBody());
-        assertEquals("MissingTopic", routeInfo.getTopic());
-        assertEquals(2, routeInfo.getQueueDatas().size());
-        assertEquals("broker-a", routeInfo.getQueueDatas().get(0).getBrokerName());
-        assertEquals(4, routeInfo.getQueueDatas().get(0).getReadQueueNums());
-        assertEquals(4, routeInfo.getQueueDatas().get(0).getWriteQueueNums());
-        assertEquals("broker-b", routeInfo.getQueueDatas().get(1).getBrokerName());
-        assertEquals(4, routeInfo.getQueueDatas().get(1).getReadQueueNums());
-        assertEquals(4, routeInfo.getQueueDatas().get(1).getWriteQueueNums());
-        assertEquals(2, routeInfo.getBrokerDatas().size());
-        assertEquals("broker-a", routeInfo.getBrokerDatas().get(0).getBrokerName());
-        assertEquals("broker-b", routeInfo.getBrokerDatas().get(1).getBrokerName());
+    @Test
+    public void testRetryTopicDoesNotUseDefaultTopicFallbackRoute() throws Exception {
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        when(routeManager.getRouteInfoByTopic("%RETRY%MissingGroup")).thenReturn(null);
+
+        NameServerProcessor processor = new NameServerProcessor(routeManager);
+        RemotingCommand request = RemotingCommand.createRequestCommand(
+                RequestCode.GET_ROUTEINFO_BY_TOPIC,
+                null
+        );
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("topic", "%RETRY%MissingGroup");
+        request.setExtFields(extFields);
+
+        Channel channel = mock(Channel.class);
+        when(channel.remoteAddress()).thenReturn(new java.net.InetSocketAddress("127.0.0.1", 12345));
+
+        RemotingCommand response = processor.processRequest(channel, request);
+
+        assertEquals(com.mq.proxy.core.protocol.ResponseCode.TOPIC_NOT_EXIST, response.getCode());
     }
 
     private static TopicRouteInfo createDefaultTopicRoute() {

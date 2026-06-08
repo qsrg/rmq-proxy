@@ -74,7 +74,10 @@ public class ConsumerSendMsgBackProcessorTest {
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
-        verify(mockAdapter).forwardToBroker(any(RemotingCommand.class), any());
+        verify(mockAdapter).forwardToBroker(argThat(cmd -> {
+            HashMap<String, String> ef = cmd.getExtFields();
+            return ef != null && "broker-a".equals(ef.get("bname"));
+        }), any());
     }
 
     @Test

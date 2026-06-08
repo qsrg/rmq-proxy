@@ -157,6 +157,13 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             maxOffset = queueOffset;
         }
 
+        if ((response.getCode() == ResponseCode.PULL_NOT_FOUND || response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY)
+                && queueOffset > 0 && nextBeginOffset < queueOffset) {
+            log.warn("pullMessage broker suggested rewind on not-found response, preserving queueOffset instead. topic={}, queueId={}, requestedOffset={}, brokerNextBeginOffset={}",
+                    topic, queueId, queueOffset, nextBeginOffset);
+            nextBeginOffset = queueOffset;
+        }
+
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             return PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);
         } else if (response.getCode() == ResponseCode.PULL_NOT_FOUND) {
