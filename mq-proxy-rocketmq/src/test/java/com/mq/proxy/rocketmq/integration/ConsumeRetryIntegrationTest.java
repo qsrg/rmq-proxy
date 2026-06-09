@@ -34,12 +34,10 @@ import static org.junit.Assert.*;
 /**
  * 集成测试：验证通过 Proxy 的消费重试功能（maxReconsumeTimes=5）
  *
- * 已知问题：
- * - 并发消费重试时，消息经过 %RETRY% Topic 后 reconsumeTimes 未被正确保留，
- *   导致 reconsumeTimes 出现 0,1,0,1... 循环而非预期的 0,1,2,3,4,5 递增。
- *   这使得消息无法正确进入死信队列（%DLQ%）。
- * - 顺序消费重试的本地阶段 reconsumeTimes 正常递增，但 sendMessageBack 发回
- *   Broker 后同样存在 reconsumeTimes 丢失问题。
+ * 测试场景：
+ * - 并发消费重试：消息消费失败后通过 CONSUMER_SEND_MSG_BACK 发回 Broker，进入 %RETRY% Topic
+ * - 顺序消费重试：消息消费失败后本地挂起重试（不经过 Broker），超过 maxReconsumeTimes 后发回 Broker
+ * - 死信队列：reconsumeTimes >= maxReconsumeTimes 时消息进入 %DLQ% Topic
  */
 public class ConsumeRetryIntegrationTest {
 
@@ -287,15 +285,7 @@ public class ConsumeRetryIntegrationTest {
                 dlqConsumer.start();
                 boolean dlqFound = dlqLatch.await(30, TimeUnit.SECONDS);
                 System.out.println("[CONC-DLQ] DLQ check result: found=" + dlqFound + ", count=" + dlqCount.get());
-                // 已知问题：由于 Proxy 转发 CONSUMER_SEND_MSG_BACK 时 reconsumeTimes 未被正确保留，
-                // Broker 端 reconsumeTimes 始终低于 maxReconsumeTimes，消息无法正确进入死信队列。
-                // 原生 RocketMQ 直连 Broker 时 reconsumeTimes 应为 0,1,2,3,4,5 递增，
-                // 但经过 Proxy 后出现 0,1,0,1,0,2... 循环，导致 DLQ 不生效。
-                if (!dlqFound) {
-                    System.out.println("[CONC-DLQ] WARNING: Message not found in DLQ. " +
-                            "This is a known issue - reconsumeTimes is not correctly preserved through Proxy, " +
-                            "preventing the message from entering the DLQ.");
-                }
+                assertTrue("Message should be found in DLQ after " + (MAX_RECONSUME_TIMES + 1) + " failed attempts", dlqFound);
             } finally {
                 dlqConsumer.shutdown();
             }
@@ -420,10 +410,6 @@ public class ConsumeRetryIntegrationTest {
      * 2. reconsumeTimes 在本地重试阶段正确递增：0, 1, 2, 3, 4, 5
      * 3. 当 reconsumeTimes >= maxReconsumeTimes 时，调用 sendMessageBack 发回 Broker
      * 4. 消息始终在原始Topic上重试（本地重试不经过 %RETRY% Topic）
-     *
-     * 注意：sendMessageBack 通过内部 Producer 发送消息到 %RETRY% Topic，
-     * 经过 Proxy 转发后 reconsumeTimes 可能丢失，导致消息无法正确进入死信队列。
-     * 此测试仅验证本地重试阶段的行为。
      */
     @Test
     public void testOrderlyRetryExhaustedLocally() throws Exception {

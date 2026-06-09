@@ -28,17 +28,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 观察性测试：记录通过 Proxy 时并发消费重试的实际行为
  * 不做断言，仅打印观察结果，用于对比原生 RocketMQ 预期行为
  *
- * 预期行为（原生 RocketMQ, maxReconsumeTimes=5）：
- * - 总消费次数 = 6（1次原始 + 5次重试）
- * - reconsumeTimes 递增: 0, 1, 2, 3, 4, 5
- * - 重试间隔: 10s, 30s, 1m, 2m, 3m
- * - 第6次消费失败后进入 %DLQ% 死信队列
+ * 预期行为（原生 RocketMQ, maxReconsumeTimes=3）：
+ * - 总消费次数 = 4（1次原始 + 3次重试）
+ * - reconsumeTimes 递增: 0, 1, 2, 3
+ * - 重试间隔: 10s, 30s, 1m
+ * - 第4次消费失败后进入 %DLQ% 死信队列
  */
 public class ConsumeRetryObservationTest {
 
     private static final String NAMESRV_ADDR =
             System.getProperty("test.namesrvAddr", "127.0.0.1:9876");
-    private static final int MAX_RECONSUME_TIMES = 5;
+    private static final int MAX_RECONSUME_TIMES = 3;
 
     private EmbeddedRocketMQProxy proxy;
 
@@ -70,8 +70,8 @@ public class ConsumeRetryObservationTest {
         AtomicInteger totalAttempts = new AtomicInteger(0);
         List<String> observations = Collections.synchronizedList(new ArrayList<String>());
         CountDownLatch warmupLatch = new CountDownLatch(1);
-        // 最多等待10次消费（预期6次，多等几次以观察异常行为）
-        CountDownLatch observedEnough = new CountDownLatch(10);
+        // 最多等待6次消费（预期4次，多等几次以观察异常行为）
+        CountDownLatch observedEnough = new CountDownLatch(6);
 
         DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
         consumer.setNamesrvAddr(proxy.getProxyAddr());
@@ -152,12 +152,12 @@ public class ConsumeRetryObservationTest {
                     + ", queueOffset=" + result.getQueueOffset());
             System.out.println();
 
-            // 等待观察足够多的消费次数（最多10分钟）
-            System.out.println("[OBSERVE] Waiting for consumption attempts (max 20, timeout 10min)...");
-            System.out.println("[OBSERVE] Expected: 6 attempts with reconsumeTimes=0,1,2,3,4,5 then DLQ");
+            // 等待观察足够多的消费次数（最多5分钟）
+            System.out.println("[OBSERVE] Waiting for consumption attempts (max 6, timeout 5min)...");
+            System.out.println("[OBSERVE] Expected: 4 attempts with reconsumeTimes=0,1,2,3 then DLQ");
             System.out.println();
 
-            boolean enough = observedEnough.await(10, TimeUnit.MINUTES);
+            boolean enough = observedEnough.await(5, TimeUnit.MINUTES);
 
             // 打印汇总
             System.out.println("\n========== OBSERVATION SUMMARY ==========");
@@ -176,8 +176,8 @@ public class ConsumeRetryObservationTest {
             System.out.println();
 
             System.out.println("--- Expected vs Actual ---");
-            System.out.println("Expected reconsumeTimes: 0, 1, 2, 3, 4, 5 (then DLQ, total 6 attempts)");
-            System.out.println("Expected retry intervals: 10s, 30s, 1m, 2m, 3m");
+            System.out.println("Expected reconsumeTimes: 0, 1, 2, 3 (then DLQ, total 4 attempts)");
+            System.out.println("Expected retry intervals: 10s, 30s, 1m");
             System.out.println();
 
             // 计算实际间隔
