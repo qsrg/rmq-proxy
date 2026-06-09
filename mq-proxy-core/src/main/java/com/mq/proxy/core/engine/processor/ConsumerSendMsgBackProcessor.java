@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
+import java.util.Map;
 
 public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
 
@@ -90,16 +91,35 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
     }
 
     private String resolveBrokerName(ConsumerSendMsgBackRequestHeader header, RemotingCommand request) {
+        // 优先从请求 extFields 中获取 bname（消费者通过 context.getMessageQueue().getBrokerName() 设置）
         if (request.getExtFields() != null) {
             String bname = request.getExtFields().get("bname");
             if (bname != null && !bname.isEmpty()) {
                 return bname;
             }
         }
+        // fallback: 从 customHeader 中获取 brokerName
+        // 注意：proxy 的 ConsumerSendMsgBackRequestHeader 没有 brokerName 字段，
+        // 但如果消费者使用 RocketMQ 原生 header，decoder 可能会设置 customHeader
+        // 此处不依赖这个路径，仅作为最终兜底
+
+        // fallback: 使用 originTopic 解析 brokerName
+        // 注意：这里无法知道原始消息的 queueId，所以无法精确路由
+        // 如果 originTopic 的路由只有一个 broker，则可以正确路由
+        // 如果有多个 broker，则可能路由到错误的 broker
         String originTopic = header.getOriginTopic();
         if (originTopic != null && this.virtualRouteManager != null) {
-            return this.virtualRouteManager.findBrokerNameByTopicAndQueueId(originTopic, 0);
+            // 确保路由信息已缓存
+            this.virtualRouteManager.getRouteInfoByTopic(originTopic);
+            String brokerName = this.virtualRouteManager.findBrokerNameByTopicAndQueueId(originTopic, 0);
+            if (brokerName != null && !brokerName.isEmpty()) {
+                log.warn("ConsumerSendMsgBack: bname not found in request, fallback to originTopic route. originTopic={}, resolvedBrokerName={}",
+                        originTopic, brokerName);
+                return brokerName;
+            }
         }
+        log.error("ConsumerSendMsgBack: cannot resolve brokerName, bname not in request and originTopic route not found. originTopic={}",
+                originTopic);
         return null;
     }
 
@@ -114,17 +134,25 @@ public class ConsumerSendMsgBackProcessor implements RemotingProcessor {
     }
 
     private RemotingCommand buildForwardRequest(ConsumerSendMsgBackRequestHeader header, RemotingCommand originalRequest, String brokerName) {
-        RemotingCommand forwardRequest = RemotingCommand.createRequestCommand(
-                RequestCode.CONSUMER_SEND_MSG_BACK, header);
-        forwardRequest.makeCustomHeaderToNet();
+        // 先将原始请求的 extFields 作为基础，确保不丢失任何字段（包括 bname 等）
         HashMap<String, String> extFields = new HashMap<>();
         if (originalRequest.getExtFields() != null) {
             extFields.putAll(originalRequest.getExtFields());
         }
+        // 将 proxy 解析出的 header 字段合并到 extFields（覆盖同名字段，确保使用 proxy 解析后的值）
+        Map<String, String> headerMap = header.toMap();
+        if (headerMap != null && !headerMap.isEmpty()) {
+            extFields.putAll(headerMap);
+        }
+        // 确保 bname 使用解析出的 brokerName（可能来自原始请求或 fallback 解析）
         if (brokerName != null && !brokerName.isEmpty()) {
             extFields.put("bname", brokerName);
         }
+
+        RemotingCommand forwardRequest = RemotingCommand.createRequestCommand(
+                RequestCode.CONSUMER_SEND_MSG_BACK, header);
         forwardRequest.setExtFields(extFields);
+        forwardRequest.makeCustomHeaderToNet();
         return forwardRequest;
     }
 }

@@ -299,6 +299,8 @@ public class NettyRemotingServer {
             } else {
                 RemotingProcessor processor = processorTable.get(msg.getCode());
                 if (processor == null) {
+                    log.debug("NO_PROCESSOR: code={}, opaque={}, oneway={}, remoteAddr={}",
+                            msg.getCode(), msg.getOpaque(), msg.isOnewayRPC(), ctx.channel().remoteAddress());
                     processor = defaultRemotingProcessor;
                 }
                 final RemotingProcessor finalProcessor = processor;

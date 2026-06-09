@@ -44,7 +44,7 @@ public class PullMessageProcessor implements RemotingProcessor {
         int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
         String brokerName = resolveBrokerName(topic, queueId, request);
 
-        log.info("PULL_REQUEST: opaque={}, group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
+        log.debug("PULL_REQUEST: opaque={}, group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
                 request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(),
@@ -68,7 +68,7 @@ public class PullMessageProcessor implements RemotingProcessor {
                 brokerName
         );
 
-        log.info("PULL_RESULT: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
+        log.debug("PULL_RESULT: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
                 request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 pullResult.getResponseCode(), pullResult.getNextBeginOffset(),
@@ -113,7 +113,7 @@ public class PullMessageProcessor implements RemotingProcessor {
             log.info("PULL_SUBSCRIPTION_ISSUE: originalCode={}, convertedTo=PULL_RETRY_IMMEDIATELY, triggered heartbeat", originalResponseCode);
         }
 
-        log.info("PULL_RESPONSE: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
+        log.debug("PULL_RESPONSE: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
                 request.getOpaque(),
                 requestHeader.getConsumerGroup(), topic, queueId,
                 response.getCode(), responseHeader.getNextBeginOffset(),

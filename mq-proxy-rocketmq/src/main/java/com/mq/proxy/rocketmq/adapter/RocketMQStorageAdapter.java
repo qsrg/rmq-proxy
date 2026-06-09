@@ -122,11 +122,11 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        log.info("pullMessage sending to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, sysFlag={}, commitOffset={}, suspendTimeout={}",
+        log.debug("pullMessage sending to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, sysFlag={}, commitOffset={}, suspendTimeout={}",
             targetAddr, consumerGroup, topic, queueId, queueOffset, finalSysFlag, commitOffset, suspendTimeoutMillis);
         RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, suspendTimeoutMillis + 1000);
 
-        log.info("pullMessage response from broker: code={}, opaque={}, extFields={}, hasBody={}, serializeType={}",
+        log.debug("pullMessage response from broker: code={}, opaque={}, extFields={}, hasBody={}, serializeType={}",
             response.getCode(), response.getOpaque(), response.getExtFields(),
             response.getBody() != null ? response.getBody().length : 0,
             response.getSerializeTypeCurrentRPC());
@@ -142,6 +142,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
                 ? Long.parseLong(response.getExtFields().get("minOffset")) : -1L;
         long maxOffset = response.getExtFields() != null && response.getExtFields().get("maxOffset") != null
                 ? Long.parseLong(response.getExtFields().get("maxOffset")) : -1L;
+        String suggestWhichBrokerId = response.getExtFields() != null && response.getExtFields().get("suggestWhichBrokerId") != null
+                ? response.getExtFields().get("suggestWhichBrokerId") : null;
 
         // 当broker返回的extFields为空时（长轮询超时后PULL_NOT_FOUND常见），
         // 使用请求的queueOffset作为nextBeginOffset，避免consumer重置offset到0导致重复消费
@@ -165,17 +167,24 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         }
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
-            return PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);
+            PullResult result = PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+            return result;
         } else if (response.getCode() == ResponseCode.PULL_NOT_FOUND) {
-            return PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
+            PullResult result = PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+            return result;
         } else if (response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY) {
-            return PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
+            PullResult result = PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+            return result;
         } else {
             PullResult result = new PullResult();
             result.setResponseCode(response.getCode());
             result.setNextBeginOffset(nextBeginOffset);
             result.setMinOffset(minOffset);
             result.setMaxOffset(maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
             return result;
         }
     }
