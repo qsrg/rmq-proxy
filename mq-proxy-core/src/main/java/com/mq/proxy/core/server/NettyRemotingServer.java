@@ -232,7 +232,8 @@ public class NettyRemotingServer {
             throw new RuntimeException("channel is not active");
         }
         request.setOpaque(this.opaqueCounter.getAndIncrement());
-        ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis);
+        ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis,
+                String.valueOf(channel.remoteAddress()));
         this.responseTable.put(request.getOpaque(), responseFuture);
         try {
             channel.writeAndFlush(request);

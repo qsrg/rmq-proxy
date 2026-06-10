@@ -2,6 +2,7 @@ package com.mq.proxy.core.integration;
 
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
+import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.core.storage.model.InternalMessage;
@@ -95,6 +96,15 @@ public class TestMockStorageAdapter implements StorageAdapter {
         long maxOffset = messageList.size();
 
         return PullResult.found(messages, nextBeginOffset, minOffset, maxOffset);
+    }
+
+    @Override
+    public void pullMessageAsync(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums,
+                                 int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription,
+                                 String expressionType, long subVersion, String brokerAddr,
+                                 PullMessageCallback callback) {
+        callback.onSuccess(pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag,
+                commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion, brokerAddr));
     }
 
     @Override

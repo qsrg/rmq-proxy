@@ -16,11 +16,15 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -114,11 +118,124 @@ public class NettyRemotingClientTest {
         assertFalse(channelTable(client).containsKey("171.31.208.1:9876"));
     }
 
+    @Test
+    public void testInvokeAsyncCallbackReceivesResponse() throws Exception {
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient();
+        Channel channel = mock(Channel.class);
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(channel.isActive()).thenReturn(true);
+        when(ctx.channel()).thenReturn(channel);
+        client.setFixedChannel(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<RemotingCommand> callbackResponse = new AtomicReference<>();
+
+        client.invokeAsync("171.31.208.1:9876", request, 3000, new InvokeCallback() {
+            @Override
+            public void operationSucceed(RemotingCommand response) {
+                callbackResponse.set(response);
+                latch.countDown();
+            }
+
+            @Override
+            public void operationFail(Throwable throwable) {
+            }
+        });
+
+        RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS, "OK");
+        response.setOpaque(request.getOpaque());
+        client.newHandler().channelRead0(ctx, response);
+
+        assertTrue(latch.await(1, TimeUnit.SECONDS));
+        assertSame(response, callbackResponse.get());
+        assertTrue(responseTable(client).isEmpty());
+    }
+
+    @Test
+    public void testClientHandlerFailsPendingAsyncRequestsWhenRemoteDisconnects() throws Exception {
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient();
+        Channel channel = mock(Channel.class);
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(channel.isActive()).thenReturn(true);
+        when(ctx.channel()).thenReturn(channel);
+        client.setFixedChannel(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+
+        client.invokeAsync("171.31.208.1:9876",
+                RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null),
+                3000,
+                new InvokeCallback() {
+                    @Override
+                    public void operationSucceed(RemotingCommand response) {
+                    }
+
+                    @Override
+                    public void operationFail(Throwable throwable) {
+                        callbackFailure.set(throwable);
+                        latch.countDown();
+                    }
+                });
+
+        client.newHandler().channelInactive(ctx);
+
+        assertTrue(latch.await(1, TimeUnit.SECONDS));
+        assertEquals("channel closed while waiting for response, addr: 171.31.208.1:9876, reason: remote-inactive",
+                callbackFailure.get().getMessage());
+        assertTrue(responseTable(client).isEmpty());
+    }
+
+    @Test
+    public void testScanResponseTableTimesOutPendingAsyncRequest() throws Exception {
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient();
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+        client.setFixedChannel(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+
+        client.invokeAsync("171.31.208.1:9876",
+                RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null),
+                1,
+                new InvokeCallback() {
+                    @Override
+                    public void operationSucceed(RemotingCommand response) {
+                    }
+
+                    @Override
+                    public void operationFail(Throwable throwable) {
+                        callbackFailure.set(throwable);
+                        latch.countDown();
+                    }
+                });
+
+        Thread.sleep(10L);
+        client.scanResponses();
+
+        assertTrue(latch.await(1, TimeUnit.SECONDS));
+        assertEquals("invokeAsync timeout, addr: 171.31.208.1:9876, timeoutMillis: 1",
+                callbackFailure.get().getMessage());
+        assertTrue(responseTable(client).isEmpty());
+    }
+
     @SuppressWarnings("unchecked")
     private static ConcurrentHashMap<String, Channel> channelTable(NettyRemotingClient client) throws Exception {
         Field field = NettyRemotingClient.class.getDeclaredField("channelTable");
         field.setAccessible(true);
         return (ConcurrentHashMap<String, Channel>) field.get(client);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ConcurrentHashMap<Integer, ResponseFuture> responseTable(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("responseTable");
+        field.setAccessible(true);
+        return (ConcurrentHashMap<Integer, ResponseFuture>) field.get(client);
     }
 
     private static class RecordingNettyRemotingClient extends NettyRemotingClient {
@@ -157,6 +274,8 @@ public class NettyRemotingClientTest {
     }
 
     private static class ExposedNettyRemotingClient extends NettyRemotingClient {
+        private Channel fixedChannel;
+
         ExposedNettyRemotingClient() {
             super(new NettyClientConfig());
         }
@@ -165,8 +284,26 @@ public class NettyRemotingClientTest {
             return invokeSyncSingle(addr, request, timeoutMillis);
         }
 
+        void setFixedChannel(Channel fixedChannel) {
+            this.fixedChannel = fixedChannel;
+        }
+
+        @Override
+        public Channel getAndCreateChannel(String addr) throws Exception {
+            if (fixedChannel != null) {
+                return fixedChannel;
+            }
+            return channelTable(this).get(addr);
+        }
+
         NettyClientHandler newHandler() {
             return new NettyClientHandler();
+        }
+
+        void scanResponses() throws Exception {
+            java.lang.reflect.Method method = NettyRemotingClient.class.getDeclaredMethod("scanResponseTable");
+            method.setAccessible(true);
+            method.invoke(this);
         }
     }
 }

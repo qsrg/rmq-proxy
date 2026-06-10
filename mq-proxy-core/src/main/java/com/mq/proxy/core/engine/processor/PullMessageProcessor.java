@@ -8,6 +8,7 @@ import com.mq.proxy.core.protocol.ResponseCode;
 import com.mq.proxy.core.protocol.header.PullMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.PullMessageResponseHeader;
 import com.mq.proxy.core.server.RemotingProcessor;
+import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
 import io.netty.channel.Channel;
@@ -38,44 +39,61 @@ public class PullMessageProcessor implements RemotingProcessor {
 
     @Override
     public RemotingCommand processRequest(Channel channel, RemotingCommand request) throws Exception {
-        PullMessageRequestHeader requestHeader = parsePullMessageRequestHeader(request);
-
-        String topic = requestHeader.getTopic();
-        int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
-        String brokerName = resolveBrokerName(topic, queueId, request);
+        final PullMessageRequestHeader requestHeader = parsePullMessageRequestHeader(request);
+        final String topic = requestHeader.getTopic();
+        final int queueId = requestHeader.getQueueId() != null ? requestHeader.getQueueId() : 0;
+        final String brokerName = resolveBrokerName(topic, queueId, request);
+        final long queueOffset = requestHeader.getQueueOffset() != null ? requestHeader.getQueueOffset() : 0;
+        final int maxMsgNums = requestHeader.getMaxMsgNums() != null ? requestHeader.getMaxMsgNums() : 32;
+        final int sysFlag = requestHeader.getSysFlag() != null ? requestHeader.getSysFlag() : 0;
+        final long commitOffset = requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : -1;
+        final long suspendTimeoutMillis = requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0;
+        final long subVersion = requestHeader.getSubVersion() != null ? requestHeader.getSubVersion() : 0L;
 
         log.debug("PULL_REQUEST: opaque={}, group={}, topic={}, queueId={}, offset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeout={}, subscription={}, exprType={}, brokerName={}",
-                request.getOpaque(),
-                requestHeader.getConsumerGroup(), topic, queueId,
-                requestHeader.getQueueOffset(), requestHeader.getMaxMsgNums(),
-                requestHeader.getSysFlag(), requestHeader.getCommitOffset(),
-                requestHeader.getSuspendTimeoutMillis(),
-                requestHeader.getSubscription(), requestHeader.getExpressionType(),
-                brokerName);
+                request.getOpaque(), requestHeader.getConsumerGroup(), topic, queueId, queueOffset, maxMsgNums,
+                sysFlag, commitOffset, suspendTimeoutMillis, requestHeader.getSubscription(),
+                requestHeader.getExpressionType(), brokerName);
 
-        PullResult pullResult = messageEngine.pullMessage(
-                requestHeader.getConsumerGroup(),
-                topic,
-                queueId,
-                requestHeader.getQueueOffset() != null ? requestHeader.getQueueOffset() : 0,
-                requestHeader.getMaxMsgNums() != null ? requestHeader.getMaxMsgNums() : 32,
-                requestHeader.getSysFlag() != null ? requestHeader.getSysFlag() : 0,
-                requestHeader.getCommitOffset() != null ? requestHeader.getCommitOffset() : -1,
-                requestHeader.getSuspendTimeoutMillis() != null ? requestHeader.getSuspendTimeoutMillis() : 0,
-                requestHeader.getSubscription(),
-                requestHeader.getExpressionType(),
-                requestHeader.getSubVersion() != null ? requestHeader.getSubVersion() : 0L,
-                brokerName
-        );
+        messageEngine.pullMessageAsync(requestHeader.getConsumerGroup(), topic, queueId, queueOffset, maxMsgNums,
+                sysFlag, commitOffset, suspendTimeoutMillis, requestHeader.getSubscription(),
+                requestHeader.getExpressionType(), subVersion, brokerName, new PullMessageCallback() {
+                    @Override
+                    public void onSuccess(PullResult pullResult) {
+                        try {
+                            log.debug("PULL_RESULT: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
+                                    request.getOpaque(), requestHeader.getConsumerGroup(), topic, queueId,
+                                    pullResult.getResponseCode(), pullResult.getNextBeginOffset(),
+                                    pullResult.getMinOffset(), pullResult.getMaxOffset(),
+                                    pullResult.getSuggestWhichBrokerId(),
+                                    pullResult.getMessageBinary() != null && pullResult.getMessageBinary().length > 0);
 
-        log.debug("PULL_RESULT: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}, suggestBrokerId={}, hasBody={}",
-                request.getOpaque(),
-                requestHeader.getConsumerGroup(), topic, queueId,
-                pullResult.getResponseCode(), pullResult.getNextBeginOffset(),
-                pullResult.getMinOffset(), pullResult.getMaxOffset(),
-                pullResult.getSuggestWhichBrokerId(),
-                pullResult.getMessageBinary() != null && pullResult.getMessageBinary().length > 0);
+                            RemotingCommand response = buildPullResponse(pullResult, topic);
+                            if (channel == null || !channel.isActive()) {
+                                log.debug("skip pull response because channel is inactive, opaque={}, group={}, topic={}, queueId={}",
+                                        request.getOpaque(), requestHeader.getConsumerGroup(), topic, queueId);
+                                return;
+                            }
+                            response.setOpaque(request.getOpaque());
+                            response.setSerializeTypeCurrentRPC(request.getSerializeTypeCurrentRPC());
+                            channel.writeAndFlush(response);
+                        } catch (Exception e) {
+                            log.error("async pull response handling failed, opaque={}, remoteChannel={}",
+                                    request.getOpaque(), channel, e);
+                        }
+                    }
 
+                    @Override
+                    public void onException(Throwable throwable) {
+                        log.error("unexpected async pull exception after MessageEngine normalization, opaque={}",
+                                request.getOpaque(), throwable);
+                    }
+                });
+
+        return null;
+    }
+
+    private RemotingCommand buildPullResponse(PullResult pullResult, String topic) throws IOException {
         PullMessageResponseHeader responseHeader = new PullMessageResponseHeader();
         responseHeader.setNextBeginOffset(pullResult.getNextBeginOffset());
         responseHeader.setMinOffset(pullResult.getMinOffset());
@@ -113,12 +131,9 @@ public class PullMessageProcessor implements RemotingProcessor {
             log.info("PULL_SUBSCRIPTION_ISSUE: originalCode={}, convertedTo=PULL_RETRY_IMMEDIATELY, triggered heartbeat", originalResponseCode);
         }
 
-        log.debug("PULL_RESPONSE: opaque={}, group={}, topic={}, queueId={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
-                request.getOpaque(),
-                requestHeader.getConsumerGroup(), topic, queueId,
-                response.getCode(), responseHeader.getNextBeginOffset(),
+        log.debug("PULL_RESPONSE: topic={}, responseCode={}, nextBeginOffset={}, minOffset={}, maxOffset={}",
+                topic, response.getCode(), responseHeader.getNextBeginOffset(),
                 responseHeader.getMinOffset(), responseHeader.getMaxOffset());
-
         return response;
     }
 

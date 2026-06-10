@@ -9,8 +9,10 @@ import com.mq.proxy.core.protocol.header.QueryConsumerOffsetRequestHeader;
 import com.mq.proxy.core.protocol.header.SendMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.SendMessageRequestHeaderV2;
 import com.mq.proxy.core.protocol.header.UpdateConsumerOffsetRequestHeader;
+import com.mq.proxy.core.server.InvokeCallback;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
+import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.core.storage.model.InternalMessage;
@@ -95,103 +97,50 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     @Override
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerAddr) throws Exception {
         checkInitialized();
-        PullMessageRequestHeader header = new PullMessageRequestHeader();
-        header.setConsumerGroup(consumerGroup);
-        header.setTopic(topic);
-        header.setQueueId(queueId);
-        header.setQueueOffset(queueOffset);
-        header.setMaxMsgNums(maxMsgNums);
-
-        String subExpr = subscription != null && !subscription.isEmpty() ? subscription : "*";
-        String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
-
-        int finalSysFlag = sysFlag;
-        // 信任消费者传入的 sysFlag，不自行设置 FLAG_COMMIT_OFFSET
-        // 消费者已在 sysFlag 中正确设置了 FLAG_COMMIT_OFFSET（仅当 commitOffset > 0 时）
-        // 之前的 commitOffset >= 0 判断会在 commitOffset=0 时强制提交 offset，导致重复消费
-        if (suspendTimeoutMillis > 0) {
-            finalSysFlag |= FLAG_SUSPEND;
-        }
-        finalSysFlag |= FLAG_SUBSCRIPTION;
-        header.setSysFlag(finalSysFlag);
-
-        header.setCommitOffset(commitOffset);
-        header.setSuspendTimeoutMillis(suspendTimeoutMillis);
-        header.setSubscription(subExpr);
-        header.setSubVersion(subVersion);
-        header.setExpressionType(exprType);
-
-        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
-        request.makeCustomHeaderToNet();
+        PullRequestContext requestContext = createPullRequest(consumerGroup, topic, queueId, queueOffset, maxMsgNums,
+                sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion);
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
         long timeoutMillis = computePullRequestTimeoutMillis(suspendTimeoutMillis);
         log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
-                targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, finalSysFlag, commitOffset,
-                suspendTimeoutMillis, timeoutMillis, subExpr, exprType, subVersion);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, timeoutMillis);
+                targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, requestContext.finalSysFlag,
+                commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription, requestContext.expressionType, subVersion);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, requestContext.request, timeoutMillis);
+        return processPullResponse(targetAddr, consumerGroup, topic, queueId, queueOffset, response);
+    }
 
-        log.info("pullMessage response from broker: targetAddr={}, code={}, remark={}, opaque={}, extFields={}, bodySize={}, serializeType={}",
-                targetAddr, response.getCode(), response.getRemark(), response.getOpaque(), response.getExtFields(),
-                response.getBody() != null ? response.getBody().length : 0,
-                response.getSerializeTypeCurrentRPC());
+    @Override
+    public void pullMessageAsync(final String consumerGroup, final String topic, final int queueId, final long queueOffset,
+                                 final int maxMsgNums, final int sysFlag, final long commitOffset,
+                                 final long suspendTimeoutMillis, final String subscription,
+                                 final String expressionType, final long subVersion, String brokerAddr,
+                                 final PullMessageCallback callback) throws Exception {
+        checkInitialized();
+        final PullRequestContext requestContext = createPullRequest(consumerGroup, topic, queueId, queueOffset,
+                maxMsgNums, sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion);
+        final String targetAddr = resolveBrokerAddr(brokerAddr);
+        final long timeoutMillis = computePullRequestTimeoutMillis(suspendTimeoutMillis);
 
-        if (response.getExtFields() == null || response.getExtFields().isEmpty()) {
-            log.warn("pullMessage response from broker has EMPTY extFields! code={}, topic={}, queueId={}, queueOffset={}",
-                response.getCode(), topic, queueId, queueOffset);
-        }
+        log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
+                targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, requestContext.finalSysFlag,
+                commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription,
+                requestContext.expressionType, subVersion);
 
-        long nextBeginOffset = response.getExtFields() != null && response.getExtFields().get("nextBeginOffset") != null
-                ? Long.parseLong(response.getExtFields().get("nextBeginOffset")) : -1L;
-        long minOffset = response.getExtFields() != null && response.getExtFields().get("minOffset") != null
-                ? Long.parseLong(response.getExtFields().get("minOffset")) : -1L;
-        long maxOffset = response.getExtFields() != null && response.getExtFields().get("maxOffset") != null
-                ? Long.parseLong(response.getExtFields().get("maxOffset")) : -1L;
-        String suggestWhichBrokerId = response.getExtFields() != null && response.getExtFields().get("suggestWhichBrokerId") != null
-                ? response.getExtFields().get("suggestWhichBrokerId") : null;
+        this.remotingClient.invokeAsync(targetAddr, requestContext.request, timeoutMillis, new InvokeCallback() {
+            @Override
+            public void operationSucceed(RemotingCommand response) {
+                try {
+                    callback.onSuccess(processPullResponse(targetAddr, consumerGroup, topic, queueId, queueOffset, response));
+                } catch (Exception e) {
+                    callback.onException(e);
+                }
+            }
 
-        // 当broker返回的extFields为空时（长轮询超时后PULL_NOT_FOUND常见），
-        // 使用请求的queueOffset作为nextBeginOffset，避免consumer重置offset到0导致重复消费
-        if (nextBeginOffset == -1L) {
-            nextBeginOffset = queueOffset;
-            log.warn("pullMessage broker response missing nextBeginOffset, using queueOffset as fallback. targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, responseCode={}",
-                    targetAddr, consumerGroup, topic, queueId, queueOffset, response.getCode());
-        }
-        if (minOffset == -1L) {
-            minOffset = 0;
-        }
-        if (maxOffset == -1L) {
-            maxOffset = queueOffset;
-        }
-
-        if ((response.getCode() == ResponseCode.PULL_NOT_FOUND || response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY)
-                && queueOffset > 0 && nextBeginOffset < queueOffset) {
-            log.warn("pullMessage broker suggested rewind on not-found response, preserving queueOffset instead. targetAddr={}, group={}, topic={}, queueId={}, requestedOffset={}, brokerNextBeginOffset={}, responseCode={}",
-                    targetAddr, consumerGroup, topic, queueId, queueOffset, nextBeginOffset, response.getCode());
-            nextBeginOffset = queueOffset;
-        }
-
-        if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
-            PullResult result = PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);
-            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
-            return result;
-        } else if (response.getCode() == ResponseCode.PULL_NOT_FOUND) {
-            PullResult result = PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
-            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
-            return result;
-        } else if (response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY) {
-            PullResult result = PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
-            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
-            return result;
-        } else {
-            PullResult result = new PullResult();
-            result.setResponseCode(response.getCode());
-            result.setNextBeginOffset(nextBeginOffset);
-            result.setMinOffset(minOffset);
-            result.setMaxOffset(maxOffset);
-            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
-            return result;
-        }
+            @Override
+            public void operationFail(Throwable throwable) {
+                callback.onException(throwable);
+            }
+        });
     }
 
     @Override
@@ -271,9 +220,114 @@ public class RocketMQStorageAdapter implements StorageAdapter {
                 suspendTimeoutMillis + LONG_POLL_TIMEOUT_MARGIN_MILLIS);
     }
 
+    private PullRequestContext createPullRequest(String consumerGroup, String topic, int queueId, long queueOffset,
+                                                 int maxMsgNums, int sysFlag, long commitOffset,
+                                                 long suspendTimeoutMillis, String subscription,
+                                                 String expressionType, long subVersion) {
+        PullMessageRequestHeader header = new PullMessageRequestHeader();
+        header.setConsumerGroup(consumerGroup);
+        header.setTopic(topic);
+        header.setQueueId(queueId);
+        header.setQueueOffset(queueOffset);
+        header.setMaxMsgNums(maxMsgNums);
+
+        String subExpr = subscription != null && !subscription.isEmpty() ? subscription : "*";
+        String exprType = expressionType != null && !expressionType.isEmpty() ? expressionType : "TAG";
+
+        int finalSysFlag = sysFlag;
+        if (suspendTimeoutMillis > 0) {
+            finalSysFlag |= FLAG_SUSPEND;
+        }
+        finalSysFlag |= FLAG_SUBSCRIPTION;
+        header.setSysFlag(finalSysFlag);
+        header.setCommitOffset(commitOffset);
+        header.setSuspendTimeoutMillis(suspendTimeoutMillis);
+        header.setSubscription(subExpr);
+        header.setSubVersion(subVersion);
+        header.setExpressionType(exprType);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PULL_MESSAGE, header);
+        request.makeCustomHeaderToNet();
+        return new PullRequestContext(request, finalSysFlag, subExpr, exprType);
+    }
+
+    private PullResult processPullResponse(String targetAddr, String consumerGroup, String topic, int queueId,
+                                           long queueOffset, RemotingCommand response) {
+        log.info("pullMessage response from broker: targetAddr={}, code={}, remark={}, opaque={}, extFields={}, bodySize={}, serializeType={}",
+                targetAddr, response.getCode(), response.getRemark(), response.getOpaque(), response.getExtFields(),
+                response.getBody() != null ? response.getBody().length : 0,
+                response.getSerializeTypeCurrentRPC());
+
+        if (response.getExtFields() == null || response.getExtFields().isEmpty()) {
+            log.warn("pullMessage response from broker has EMPTY extFields! code={}, topic={}, queueId={}, queueOffset={}",
+                    response.getCode(), topic, queueId, queueOffset);
+        }
+
+        long nextBeginOffset = response.getExtFields() != null && response.getExtFields().get("nextBeginOffset") != null
+                ? Long.parseLong(response.getExtFields().get("nextBeginOffset")) : -1L;
+        long minOffset = response.getExtFields() != null && response.getExtFields().get("minOffset") != null
+                ? Long.parseLong(response.getExtFields().get("minOffset")) : -1L;
+        long maxOffset = response.getExtFields() != null && response.getExtFields().get("maxOffset") != null
+                ? Long.parseLong(response.getExtFields().get("maxOffset")) : -1L;
+        String suggestWhichBrokerId = response.getExtFields() != null && response.getExtFields().get("suggestWhichBrokerId") != null
+                ? response.getExtFields().get("suggestWhichBrokerId") : null;
+
+        if (nextBeginOffset == -1L) {
+            nextBeginOffset = queueOffset;
+            log.warn("pullMessage broker response missing nextBeginOffset, using queueOffset as fallback. targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, responseCode={}",
+                    targetAddr, consumerGroup, topic, queueId, queueOffset, response.getCode());
+        }
+        if (minOffset == -1L) {
+            minOffset = 0;
+        }
+        if (maxOffset == -1L) {
+            maxOffset = queueOffset;
+        }
+
+        if ((response.getCode() == ResponseCode.PULL_NOT_FOUND || response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY)
+                && queueOffset > 0 && nextBeginOffset < queueOffset) {
+            log.warn("pullMessage broker suggested rewind on not-found response, preserving queueOffset instead. targetAddr={}, group={}, topic={}, queueId={}, requestedOffset={}, brokerNextBeginOffset={}, responseCode={}",
+                    targetAddr, consumerGroup, topic, queueId, queueOffset, nextBeginOffset, response.getCode());
+            nextBeginOffset = queueOffset;
+        }
+
+        if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
+            PullResult result = PullResult.found(response.getBody(), nextBeginOffset, minOffset, maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+            return result;
+        }
+        if (response.getCode() == ResponseCode.PULL_NOT_FOUND || response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY) {
+            PullResult result = PullResult.notFound(nextBeginOffset, minOffset, maxOffset);
+            result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+            return result;
+        }
+
+        PullResult result = new PullResult();
+        result.setResponseCode(response.getCode());
+        result.setNextBeginOffset(nextBeginOffset);
+        result.setMinOffset(minOffset);
+        result.setMaxOffset(maxOffset);
+        result.setSuggestWhichBrokerId(suggestWhichBrokerId);
+        return result;
+    }
+
     private void checkInitialized() {
         if (!initialized) {
             throw new IllegalStateException("RocketMQStorageAdapter is not initialized");
+        }
+    }
+
+    private static class PullRequestContext {
+        private final RemotingCommand request;
+        private final int finalSysFlag;
+        private final String subscription;
+        private final String expressionType;
+
+        private PullRequestContext(RemotingCommand request, int finalSysFlag, String subscription, String expressionType) {
+            this.request = request;
+            this.finalSysFlag = finalSysFlag;
+            this.subscription = subscription;
+            this.expressionType = expressionType;
         }
     }
 }

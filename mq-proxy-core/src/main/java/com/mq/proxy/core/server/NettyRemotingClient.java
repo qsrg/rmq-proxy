@@ -32,15 +32,17 @@ import java.io.InputStream;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class NettyRemotingClient {
@@ -56,6 +58,7 @@ public class NettyRemotingClient {
     private final AtomicInteger opaqueCounter = new AtomicInteger(0);
     private final AtomicInteger addressSelector = new AtomicInteger(0);
     private ExecutorService callbackExecutor;
+    private ScheduledExecutorService responseTableScanExecutor;
     private final ConcurrentHashMap<Integer, RemotingProcessor> processorTable = new ConcurrentHashMap<>();
     private final ReentrantLock createChannelLock = new ReentrantLock();
 
@@ -128,6 +131,24 @@ public class NettyRemotingClient {
                     return new Thread(r, "NettyClientCallbackThread_" + threadIndex.incrementAndGet());
                 }
             });
+        this.responseTableScanExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadIndex = new AtomicInteger(0);
+
+            @Override
+            public Thread newThread(Runnable r) {
+                return new Thread(r, "NettyClientResponseScanThread_" + threadIndex.incrementAndGet());
+            }
+        });
+        this.responseTableScanExecutor.scheduleAtFixedRate(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    scanResponseTable();
+                } catch (Throwable e) {
+                    log.warn("scanResponseTable exception: {}", e.getMessage());
+                }
+            }
+        }, 1000L, 1000L, TimeUnit.MILLISECONDS);
 
         this.bootstrap = new Bootstrap();
         this.bootstrap.group(this.eventLoopGroup)
@@ -158,11 +179,16 @@ public class NettyRemotingClient {
         if (this.eventLoopGroup != null) {
             this.eventLoopGroup.shutdownGracefully();
         }
+        if (this.responseTableScanExecutor != null) {
+            this.responseTableScanExecutor.shutdown();
+        }
         if (this.callbackExecutor != null) {
             this.callbackExecutor.shutdown();
         }
         for (ResponseFuture responseFuture : this.responseTable.values()) {
-            responseFuture.putResponse(null);
+            if (responseFuture.fail(new RuntimeException("client shutdown"))) {
+                executeInvokeCallback(responseFuture);
+            }
         }
         this.responseTable.clear();
     }
@@ -247,7 +273,7 @@ public class NettyRemotingClient {
             throw new RuntimeException("channel is not active, addr: " + addr);
         }
         request.setOpaque(this.opaqueCounter.getAndIncrement());
-        ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis);
+        ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis, addr);
         this.responseTable.put(request.getOpaque(), responseFuture);
         try {
             ChannelFuture writeFuture = channel.writeAndFlush(request);
@@ -261,7 +287,7 @@ public class NettyRemotingClient {
                         }
                         responseFuture.setSendRequestOK(false);
                         responseFuture.setCause(future.cause());
-                        responseFuture.putResponse(null);
+                        responseFuture.fail(future.cause());
                     }
                 });
             }
@@ -270,6 +296,9 @@ public class NettyRemotingClient {
                 if (!responseFuture.isSendRequestOK()) {
                     closeChannel(addr, channel, "send-failed");
                     throw new RuntimeException("send request failed, addr: " + addr, responseFuture.getCause());
+                }
+                if (responseFuture.getCause() != null) {
+                    throw new RuntimeException(responseFuture.getCause().getMessage(), responseFuture.getCause());
                 }
                 throw new RuntimeException("invokeSync timeout, addr: " + addr + ", timeoutMillis: " + timeoutMillis);
             }
@@ -283,6 +312,77 @@ public class NettyRemotingClient {
             throw e;
         } finally {
             this.responseTable.remove(request.getOpaque());
+        }
+    }
+
+    public void invokeAsync(String addr, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback) throws Exception {
+        List<String> targetAddrs = parseTargetAddrs(addr);
+        if (targetAddrs.isEmpty()) {
+            throw new IllegalArgumentException("addr is blank");
+        }
+        if (targetAddrs.size() == 1) {
+            invokeAsyncSingle(targetAddrs.get(0), request, timeoutMillis, invokeCallback);
+            return;
+        }
+
+        Exception lastException = null;
+        int startIndex = Math.floorMod(this.addressSelector.getAndIncrement(), targetAddrs.size());
+        for (int i = 0; i < targetAddrs.size(); i++) {
+            String targetAddr = targetAddrs.get((startIndex + i) % targetAddrs.size());
+            try {
+                invokeAsyncSingle(targetAddr, request, timeoutMillis, invokeCallback);
+                return;
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("invokeAsync failed for addr {}, trying next address if available: {}", targetAddr, e.getMessage());
+            }
+        }
+        if (lastException != null) {
+            throw lastException;
+        }
+        throw new RuntimeException("invokeAsync failed, addr: " + addr);
+    }
+
+    protected void invokeAsyncSingle(String addr, RemotingCommand request, long timeoutMillis,
+                                     InvokeCallback invokeCallback) throws Exception {
+        Channel channel = getAndCreateChannel(addr);
+        if (channel == null || !channel.isActive()) {
+            closeChannel(addr, channel, "inactive-before-async");
+            throw new RuntimeException("channel is not active, addr: " + addr);
+        }
+
+        request.setOpaque(this.opaqueCounter.getAndIncrement());
+        final ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis, addr, invokeCallback);
+        this.responseTable.put(request.getOpaque(), responseFuture);
+        try {
+            ChannelFuture writeFuture = channel.writeAndFlush(request);
+            if (writeFuture != null) {
+                writeFuture.addListener(new ChannelFutureListener() {
+                    @Override
+                    public void operationComplete(ChannelFuture future) {
+                        if (future.isSuccess()) {
+                            responseFuture.setSendRequestOK(true);
+                            return;
+                        }
+                        responseFuture.setSendRequestOK(false);
+                        responseFuture.setCause(future.cause());
+                        if (responseTable.remove(request.getOpaque(), responseFuture) && responseFuture.fail(
+                                new RuntimeException("send request failed, addr: " + addr, future.cause()))) {
+                            executeInvokeCallback(responseFuture);
+                        }
+                        closeChannel(addr, channel, "send-failed");
+                    }
+                });
+            }
+        } catch (Exception e) {
+            this.responseTable.remove(request.getOpaque(), responseFuture);
+            responseFuture.fail(e);
+            executeInvokeCallback(responseFuture);
+            if (!(e instanceof RuntimeException && e.getMessage() != null
+                    && e.getMessage().startsWith("send request failed"))) {
+                closeChannel(addr, channel, "async-failed");
+            }
+            throw e;
         }
     }
 
@@ -339,6 +439,7 @@ public class NettyRemotingClient {
         }
         log.info("NettyRemotingClient disconnected: addr={}, localAddress={}, remoteAddress={}, reason={}",
                 addr, channel.localAddress(), channel.remoteAddress(), reason);
+        failResponseFuturesByChannel(channel, addr, reason);
         try {
             channel.close();
         } catch (Exception e) {
@@ -354,11 +455,13 @@ public class NettyRemotingClient {
             if (this.channelTable.remove(addr, channel)) {
                 log.info("NettyRemotingClient disconnected: addr={}, localAddress={}, remoteAddress={}, reason={}",
                         addr, channel.localAddress(), channel.remoteAddress(), reason);
+                failResponseFuturesByChannel(channel, addr, reason);
                 return;
             }
         }
         log.debug("NettyRemotingClient disconnected: localAddress={}, remoteAddress={}, reason={}, addr=unknown",
                 channel.localAddress(), channel.remoteAddress(), reason);
+        failResponseFuturesByChannel(channel, "unknown", reason);
     }
 
     public void setNamesrvAddr(String namesrvAddr) {
@@ -379,9 +482,10 @@ public class NettyRemotingClient {
         protected void channelRead0(ChannelHandlerContext ctx, RemotingCommand msg) throws Exception {
             if (msg.isResponseType()) {
                 ResponseFuture responseFuture = responseTable.get(msg.getOpaque());
-                if (responseFuture != null) {
-                    responseFuture.putResponse(msg);
-                    responseTable.remove(msg.getOpaque());
+                if (responseFuture != null && responseTable.remove(msg.getOpaque(), responseFuture)) {
+                    if (responseFuture.putResponse(msg)) {
+                        executeInvokeCallback(responseFuture);
+                    }
                 }
             } else {
                 RemotingProcessor processor = processorTable.get(msg.getCode());
@@ -438,6 +542,63 @@ public class NettyRemotingClient {
             log.error("NettyClientHandler exception", cause);
             removeChannel(ctx.channel(), "exception");
             ctx.close();
+        }
+    }
+
+    private void scanResponseTable() {
+        for (Map.Entry<Integer, ResponseFuture> entry : this.responseTable.entrySet()) {
+            ResponseFuture responseFuture = entry.getValue();
+            if (!responseFuture.isTimeout()) {
+                continue;
+            }
+            if (!this.responseTable.remove(entry.getKey(), responseFuture)) {
+                continue;
+            }
+            if (responseFuture.isAsync()) {
+                if (responseFuture.fail(new RuntimeException("invokeAsync timeout, addr: "
+                        + responseFuture.getRemoteAddr() + ", timeoutMillis: " + responseFuture.getTimeoutMillis()))) {
+                    executeInvokeCallback(responseFuture);
+                }
+            } else {
+                responseFuture.putResponse(null);
+            }
+        }
+    }
+
+    private void failResponseFuturesByChannel(Channel channel, String addr, String reason) {
+        for (Map.Entry<Integer, ResponseFuture> entry : this.responseTable.entrySet()) {
+            ResponseFuture responseFuture = entry.getValue();
+            if (responseFuture.getProcessChannel() != channel) {
+                continue;
+            }
+            if (!this.responseTable.remove(entry.getKey(), responseFuture)) {
+                continue;
+            }
+            if (responseFuture.fail(new RuntimeException("channel closed while waiting for response, addr: "
+                    + addr + ", reason: " + reason))) {
+                executeInvokeCallback(responseFuture);
+            }
+        }
+    }
+
+    private void executeInvokeCallback(final ResponseFuture responseFuture) {
+        if (responseFuture.getInvokeCallback() == null) {
+            return;
+        }
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                if (responseFuture.getResponseCommand() != null) {
+                    responseFuture.getInvokeCallback().operationSucceed(responseFuture.getResponseCommand());
+                } else {
+                    responseFuture.getInvokeCallback().operationFail(responseFuture.getCause());
+                }
+            }
+        };
+        if (this.callbackExecutor != null) {
+            this.callbackExecutor.submit(task);
+        } else {
+            task.run();
         }
     }
 

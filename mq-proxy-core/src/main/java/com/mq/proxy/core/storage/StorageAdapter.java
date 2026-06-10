@@ -15,6 +15,11 @@ public interface StorageAdapter {
 
     PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerAddr) throws Exception;
 
+    void pullMessageAsync(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums,
+                          int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription,
+                          String expressionType, long subVersion, String brokerAddr,
+                          PullMessageCallback callback) throws Exception;
+
     OffsetResult queryConsumerOffset(String consumerGroup, String topic, int queueId, String brokerAddr) throws Exception;
 
     void updateConsumerOffset(String consumerGroup, String topic, int queueId, long commitOffset, String brokerAddr) throws Exception;

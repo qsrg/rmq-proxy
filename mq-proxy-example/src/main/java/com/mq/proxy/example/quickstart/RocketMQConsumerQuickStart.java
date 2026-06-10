@@ -23,11 +23,11 @@ public class RocketMQConsumerQuickStart {
         System.out.println("========================================");
         System.out.println();
 
-        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("ConsumerGroup5");
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("ConsumerGroup6");
         consumer.setNamesrvAddr("127.0.0.1:10913");
 
         try {
-            String topic = "QuickStartTopic4";
+            String topic = "QuickStartTopic6";
             consumer.subscribe(topic, "*");
 
             System.out.println("消费配置:");

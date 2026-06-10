@@ -4,6 +4,7 @@ import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.server.NettyRemotingServer;
+import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.OffsetResult;
@@ -70,6 +71,41 @@ public class MessageEngine {
                     suspendTimeoutMillis, subscription, expressionType, subVersion, brokerName, brokerAddr,
                     queueOffset, e);
             return PullResult.fail(RemotingSysResponseCode.SYSTEM_ERROR, queueOffset, 0, queueOffset);
+        }
+    }
+
+    public void pullMessageAsync(final String consumerGroup, final String topic, final int queueId, final long queueOffset,
+                                 final int maxMsgNums, final int sysFlag, final long commitOffset,
+                                 final long suspendTimeoutMillis, final String subscription,
+                                 final String expressionType, final long subVersion, final String brokerName,
+                                 final PullMessageCallback callback) {
+        String brokerAddr = null;
+        try {
+            brokerAddr = resolveBrokerAddr(brokerName, topic);
+            final String resolvedBrokerAddr = brokerAddr;
+            storageAdapter.pullMessageAsync(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag,
+                    commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion, brokerAddr,
+                    new PullMessageCallback() {
+                        @Override
+                        public void onSuccess(PullResult pullResult) {
+                            callback.onSuccess(pullResult);
+                        }
+
+                        @Override
+                        public void onException(Throwable throwable) {
+                            log.warn("pullMessage failed, returning system error with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, subscription={}, expressionType={}, subVersion={}, brokerName={}, brokerAddr={}, preservedNextBeginOffset={}",
+                                    consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset,
+                                    suspendTimeoutMillis, subscription, expressionType, subVersion, brokerName,
+                                    resolvedBrokerAddr, queueOffset, throwable);
+                            callback.onSuccess(PullResult.fail(RemotingSysResponseCode.SYSTEM_ERROR, queueOffset, 0, queueOffset));
+                        }
+                    });
+        } catch (Exception e) {
+            log.warn("pullMessage failed, returning system error with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, subscription={}, expressionType={}, subVersion={}, brokerName={}, brokerAddr={}, preservedNextBeginOffset={}",
+                    consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset,
+                    suspendTimeoutMillis, subscription, expressionType, subVersion, brokerName, brokerAddr,
+                    queueOffset, e);
+            callback.onSuccess(PullResult.fail(RemotingSysResponseCode.SYSTEM_ERROR, queueOffset, 0, queueOffset));
         }
     }
 
