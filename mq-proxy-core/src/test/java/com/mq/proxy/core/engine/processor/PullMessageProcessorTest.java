@@ -255,7 +255,7 @@ public class PullMessageProcessorTest {
         RemotingCommand response = processor.processRequest(null, request);
 
         assertNotNull(response);
-        assertEquals(ResponseCode.PULL_NOT_FOUND, response.getCode());
+        assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
         assertEquals("5", response.getExtFields().get("nextBeginOffset"));
     }
 

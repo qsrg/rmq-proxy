@@ -50,7 +50,7 @@ public class NettyRemotingServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
-    private final ConcurrentHashMap<Integer, RemotingProcessor> processorTable = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, ProcessorRegistration> processorTable = new ConcurrentHashMap<>();
     private RemotingProcessor defaultRemotingProcessor = new DefaultRemotingProcessor();
     private final AtomicInteger opaqueCounter = new AtomicInteger(0);
     private final ConcurrentHashMap<Integer, ResponseFuture> responseTable = new ConcurrentHashMap<>();
@@ -60,9 +60,13 @@ public class NettyRemotingServer {
     private ClientConnectionManager clientConnectionManager;
     private SslContext sslContext;
     private ExecutorService defaultExecutor;
+    private final ExecutorService pullExecutor;
 
     public NettyRemotingServer(NettyServerConfig nettyServerConfig) {
         this.nettyServerConfig = nettyServerConfig;
+        this.pullExecutor = createRequestExecutor(
+                this.nettyServerConfig.getPullExecutorThreadNums(),
+                "ProxyPullRequestProcessor_");
         if (nettyServerConfig.isTlsEnabled()) {
             try {
                 this.sslContext = buildSslContext();
@@ -126,20 +130,9 @@ public class NettyRemotingServer {
                         return new Thread(r, "ServerCallbackThread_" + threadIndex.incrementAndGet());
                     }
                 });
-        this.defaultExecutor = new ThreadPoolExecutor(
+        this.defaultExecutor = createRequestExecutor(
                 Runtime.getRuntime().availableProcessors() * 2,
-                Runtime.getRuntime().availableProcessors() * 2,
-                60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<Runnable>(10000),
-                new ThreadFactory() {
-                    private final AtomicInteger threadIndex = new AtomicInteger(0);
-                    @Override
-                    public Thread newThread(Runnable r) {
-                        Thread t = new Thread(r, "ProxyRequestProcessor_" + threadIndex.incrementAndGet());
-                        t.setDaemon(true);
-                        return t;
-                    }
-                });
+                "ProxyRequestProcessor_");
         this.channelScanExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
             private final AtomicInteger threadIndex = new AtomicInteger(0);
             @Override
@@ -217,6 +210,9 @@ public class NettyRemotingServer {
         if (this.defaultExecutor != null) {
             this.defaultExecutor.shutdown();
         }
+        if (this.pullExecutor != null) {
+            this.pullExecutor.shutdown();
+        }
         for (ResponseFuture responseFuture : this.responseTable.values()) {
             responseFuture.putResponse(null);
         }
@@ -224,7 +220,11 @@ public class NettyRemotingServer {
     }
 
     public void registerProcessor(int requestCode, RemotingProcessor processor) {
-        this.processorTable.put(requestCode, processor);
+        this.processorTable.put(requestCode, new ProcessorRegistration(processor, null));
+    }
+
+    public void registerPullProcessor(int requestCode, RemotingProcessor processor) {
+        this.processorTable.put(requestCode, new ProcessorRegistration(processor, pullExecutor));
     }
 
     public RemotingCommand invokeSync(Channel channel, RemotingCommand request, long timeoutMillis) throws Exception {
@@ -297,14 +297,15 @@ public class NettyRemotingServer {
                     responseTable.remove(msg.getOpaque());
                 }
             } else {
-                RemotingProcessor processor = processorTable.get(msg.getCode());
-                if (processor == null) {
+                ProcessorRegistration registration = processorTable.get(msg.getCode());
+                if (registration == null) {
                     log.debug("NO_PROCESSOR: code={}, opaque={}, oneway={}, remoteAddr={}",
                             msg.getCode(), msg.getOpaque(), msg.isOnewayRPC(), ctx.channel().remoteAddress());
-                    processor = defaultRemotingProcessor;
+                    registration = new ProcessorRegistration(defaultRemotingProcessor, null);
                 }
-                final RemotingProcessor finalProcessor = processor;
-                defaultExecutor.submit(() -> {
+                final RemotingProcessor finalProcessor = registration.processor;
+                ExecutorService executor = registration.executor != null ? registration.executor : defaultExecutor;
+                executor.submit(() -> {
                     try {
                         RemotingCommand response = finalProcessor.processRequest(ctx.channel(), msg);
                         if (!msg.isOnewayRPC() && response != null) {
@@ -335,6 +336,36 @@ public class NettyRemotingServer {
                 clientConnectionManager.onChannelInactive(ctx.channel());
             }
             ctx.close();
+        }
+    }
+
+    private ExecutorService createRequestExecutor(int threadNums, String threadNamePrefix) {
+        final int boundedThreadNums = Math.max(1, threadNums);
+        return new ThreadPoolExecutor(
+                boundedThreadNums,
+                boundedThreadNums,
+                60L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>(10000),
+                new ThreadFactory() {
+                    private final AtomicInteger threadIndex = new AtomicInteger(0);
+
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, threadNamePrefix + threadIndex.incrementAndGet());
+                        t.setDaemon(true);
+                        return t;
+                    }
+                });
+    }
+
+    private static class ProcessorRegistration {
+        private final RemotingProcessor processor;
+        private final ExecutorService executor;
+
+        private ProcessorRegistration(RemotingProcessor processor, ExecutorService executor) {
+            this.processor = processor;
+            this.executor = executor;
         }
     }
 }

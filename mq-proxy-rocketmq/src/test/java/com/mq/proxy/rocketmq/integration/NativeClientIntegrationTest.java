@@ -39,7 +39,7 @@ import static org.junit.Assert.*;
 public class NativeClientIntegrationTest {
 
     private static final String NAMESRV_ADDR =
-            System.getProperty("test.namesrvAddr", "127.0.0.1:9876");
+            System.getProperty("test.namesrvAddr", RocketMQIntegrationSupport.DEFAULT_NAMESRV_ADDR);
     private static final String TOPIC_PREFIX = "NATIVE_CLIENT_TEST_" + System.currentTimeMillis();
     private static final String PRODUCER_GROUP_PREFIX = "PID_NATIVE_TEST_" + System.currentTimeMillis();
     private EmbeddedRocketMQProxy proxy;
@@ -490,9 +490,10 @@ public class NativeClientIntegrationTest {
         DefaultMQProducer producer = createProducer(PRODUCER_GROUP_PREFIX + "_BROADCAST", "NativeBroadcastProducer");
 
         try {
+            producer.start();
+            producer.createTopic("TBW102", topic, 4);
             consumer1.start();
             consumer2.start();
-            producer.start();
 
             Message warmup = new Message(topic, "TAG_BROADCAST", "WARMUP",
                     warmupBody.getBytes(RemotingHelper.DEFAULT_CHARSET));

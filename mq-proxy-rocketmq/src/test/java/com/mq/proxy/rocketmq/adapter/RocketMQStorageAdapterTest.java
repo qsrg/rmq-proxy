@@ -50,6 +50,20 @@ public class RocketMQStorageAdapterTest {
         assertEquals(2L, result.getNextBeginOffset());
     }
 
+    @Test
+    public void testPullMessageUsesNativeCompatibleSuspendTimeoutBudget() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        RecordingRemotingClient remotingClient = new RecordingRemotingClient(createPullNotFoundResponse(2L, 0L, 2L));
+        setField(adapter, "initialized", true);
+        setField(adapter, "remotingClient", remotingClient);
+
+        adapter.pullMessage(
+                "CID_TEST", "TestTopic", 0, 2L, 32, 0, 2L,
+                15000L, "*", "TAG", 0L, "127.0.0.1:10911");
+
+        assertEquals(30000L, remotingClient.lastTimeoutMillis);
+    }
+
     private static RemotingCommand createPullNotFoundResponse(long nextBeginOffset, long minOffset, long maxOffset) {
         RemotingCommand response = RemotingCommand.createResponseCommand(ResponseCode.PULL_NOT_FOUND);
         HashMap<String, String> extFields = new HashMap<>();
@@ -82,6 +96,20 @@ public class RocketMQStorageAdapterTest {
         @Override
         protected RemotingCommand invokeSyncSingle(String addr, RemotingCommand request, long timeoutMillis) {
             return response;
+        }
+    }
+
+    private static class RecordingRemotingClient extends FixedResponseRemotingClient {
+        private long lastTimeoutMillis;
+
+        RecordingRemotingClient(RemotingCommand response) {
+            super(response);
+        }
+
+        @Override
+        public RemotingCommand invokeSync(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
+            this.lastTimeoutMillis = timeoutMillis;
+            return super.invokeSync(addr, request, timeoutMillis);
         }
     }
 }

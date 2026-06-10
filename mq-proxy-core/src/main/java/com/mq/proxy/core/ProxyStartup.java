@@ -77,6 +77,7 @@ public class ProxyStartup {
         nettyServerConfig.setListenPort(proxyConfig.getListenPort());
         nettyServerConfig.setBossThreadNums(proxyConfig.getBossThreadNums());
         nettyServerConfig.setWorkerThreadNums(proxyConfig.getWorkerThreadNums());
+        nettyServerConfig.setPullExecutorThreadNums(proxyConfig.getPullExecutorThreadNums());
 
         if (proxyConfig.isTlsEnabled()) {
             nettyServerConfig.setTlsEnabled(true);

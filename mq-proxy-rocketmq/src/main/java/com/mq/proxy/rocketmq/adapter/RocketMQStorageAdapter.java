@@ -23,6 +23,9 @@ import org.slf4j.LoggerFactory;
 public class RocketMQStorageAdapter implements StorageAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(RocketMQStorageAdapter.class);
+    private static final long DEFAULT_REQUEST_TIMEOUT_MILLIS = 3000L;
+    private static final long LONG_POLL_TIMEOUT_MARGIN_MILLIS = 5000L;
+    private static final long MIN_LONG_POLL_REQUEST_TIMEOUT_MILLIS = 30000L;
 
     private NettyRemotingClient remotingClient;
     private StorageConfig storageConfig;
@@ -122,7 +125,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        long timeoutMillis = suspendTimeoutMillis + 1000;
+        long timeoutMillis = computePullRequestTimeoutMillis(suspendTimeoutMillis);
         log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
                 targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, finalSysFlag, commitOffset,
                 suspendTimeoutMillis, timeoutMillis, subExpr, exprType, subVersion);
@@ -258,6 +261,14 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             throw new IllegalStateException("brokerAddr is required");
         }
         return brokerAddr;
+    }
+
+    private long computePullRequestTimeoutMillis(long suspendTimeoutMillis) {
+        if (suspendTimeoutMillis <= 0) {
+            return DEFAULT_REQUEST_TIMEOUT_MILLIS;
+        }
+        return Math.max(MIN_LONG_POLL_REQUEST_TIMEOUT_MILLIS,
+                suspendTimeoutMillis + LONG_POLL_TIMEOUT_MARGIN_MILLIS);
     }
 
     private void checkInitialized() {

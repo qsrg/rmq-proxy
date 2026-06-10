@@ -13,7 +13,8 @@ import static org.junit.Assert.*;
 
 public class NativeClientTlsIntegrationTest {
 
-    private static final String NAMESRV_ADDR = "127.0.0.1:9876";
+    private static final String NAMESRV_ADDR =
+            System.getProperty("test.namesrvAddr", RocketMQIntegrationSupport.DEFAULT_NAMESRV_ADDR);
     private static final String TOPIC = "TLS_NATIVE_CLIENT_TEST";
     private static final String PRODUCER_GROUP = "PID_TLS_NATIVE_TEST";
     private static final String CONSUMER_GROUP = "CID_TLS_NATIVE_TEST";

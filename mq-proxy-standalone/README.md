@@ -105,6 +105,7 @@ proxy.namesrvAddr=10.0.0.1:9876;10.0.0.2:9876
 |--------|--------|------|
 | `proxy.bossThreadNums` | 1 | Boss 线程数，负责接受新连接 |
 | `proxy.workerThreadNums` | CPU 核心数 | Worker 线程数，处理 I/O 事件 |
+| `proxy.pullExecutorThreadNums` | 32 | Pull 长轮询专用线程数，建议按并发拉取数单独调大 |
 
 ### TLS 配置
 

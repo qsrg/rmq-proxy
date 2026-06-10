@@ -30,7 +30,7 @@ public class ProcessorRegister {
 
         PullMessageProcessor pullMessageProcessor = new PullMessageProcessor(messageEngine);
         pullMessageProcessor.setVirtualRouteManager(virtualRouteManager);
-        remotingServer.registerProcessor(RequestCode.PULL_MESSAGE, pullMessageProcessor);
+        remotingServer.registerPullProcessor(RequestCode.PULL_MESSAGE, pullMessageProcessor);
 
         ConsumerManageProcessor consumerManageProcessor = new ConsumerManageProcessor(messageEngine);
         consumerManageProcessor.setVirtualRouteManager(virtualRouteManager);

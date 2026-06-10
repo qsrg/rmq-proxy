@@ -6,6 +6,7 @@ import com.mq.proxy.core.protocol.codec.RemotingCommandEncoder;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -19,6 +20,9 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -137,6 +141,8 @@ public class NettyRemotingClient {
                             SSLEngine sslEngine = sslContext.newEngine(ch.alloc());
                             ch.pipeline().addLast("ssl", new SslHandler(sslEngine));
                         }
+                        ch.pipeline().addLast("idleStateHandler",
+                                new IdleStateHandler(0, 0, nettyClientConfig.getClientChannelMaxIdleTimeSeconds()));
                         ch.pipeline().addLast(new RemotingCommandDecoder());
                         ch.pipeline().addLast(new RemotingCommandEncoder());
                         ch.pipeline().addLast(new NettyClientHandler());
@@ -244,14 +250,36 @@ public class NettyRemotingClient {
         ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis);
         this.responseTable.put(request.getOpaque(), responseFuture);
         try {
-            channel.writeAndFlush(request);
+            ChannelFuture writeFuture = channel.writeAndFlush(request);
+            if (writeFuture != null) {
+                writeFuture.addListener(new ChannelFutureListener() {
+                    @Override
+                    public void operationComplete(ChannelFuture future) {
+                        if (future.isSuccess()) {
+                            responseFuture.setSendRequestOK(true);
+                            return;
+                        }
+                        responseFuture.setSendRequestOK(false);
+                        responseFuture.setCause(future.cause());
+                        responseFuture.putResponse(null);
+                    }
+                });
+            }
             RemotingCommand response = responseFuture.waitResponse(timeoutMillis);
             if (response == null) {
+                if (!responseFuture.isSendRequestOK()) {
+                    closeChannel(addr, channel, "send-failed");
+                    throw new RuntimeException("send request failed, addr: " + addr, responseFuture.getCause());
+                }
                 throw new RuntimeException("invokeSync timeout, addr: " + addr + ", timeoutMillis: " + timeoutMillis);
             }
             return response;
         } catch (Exception e) {
-            closeChannel(addr, channel, "sync-failed");
+            if (!(e instanceof RuntimeException && e.getMessage() != null
+                    && (e.getMessage().startsWith("invokeSync timeout")
+                    || e.getMessage().startsWith("send request failed")))) {
+                closeChannel(addr, channel, "sync-failed");
+            }
             throw e;
         } finally {
             this.responseTable.remove(request.getOpaque());
@@ -390,6 +418,19 @@ public class NettyRemotingClient {
         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
             removeChannel(ctx.channel(), "remote-inactive");
             super.channelInactive(ctx);
+        }
+
+        @Override
+        public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+            if (evt instanceof IdleStateEvent) {
+                IdleStateEvent event = (IdleStateEvent) evt;
+                if (event.state() == IdleState.ALL_IDLE) {
+                    removeChannel(ctx.channel(), "idle");
+                    ctx.close();
+                    return;
+                }
+            }
+            super.userEventTriggered(ctx, evt);
         }
 
         @Override

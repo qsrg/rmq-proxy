@@ -15,10 +15,27 @@ import java.util.Map;
 
 final class RocketMQIntegrationSupport {
 
+    static final String DEFAULT_NAMESRV_ADDR = "127.0.0.1:9876;127.0.0.1:9877";
+
     private RocketMQIntegrationSupport() {
     }
 
     static String discoverBrokerAddr(NettyRemotingClient client, String namesrvAddr) throws Exception {
+        for (String addr : namesrvAddr.split(";")) {
+            String trimmedAddr = addr.trim();
+            if (trimmedAddr.isEmpty()) {
+                continue;
+            }
+            String brokerAddr = discoverBrokerAddrFromOneNamesrv(client, trimmedAddr);
+            if (brokerAddr != null) {
+                return brokerAddr;
+            }
+        }
+
+        return null;
+    }
+
+    private static String discoverBrokerAddrFromOneNamesrv(NettyRemotingClient client, String namesrvAddr) throws Exception {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ROUTEINFO_BY_TOPIC, null);
         HashMap<String, String> extFields = new HashMap<>();
         extFields.put("topic", "TBW102");

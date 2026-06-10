@@ -20,6 +20,15 @@ public class PullResult {
         return result;
     }
 
+    public static PullResult fail(int responseCode, long nextBeginOffset, long minOffset, long maxOffset) {
+        PullResult result = new PullResult();
+        result.setResponseCode(responseCode);
+        result.setNextBeginOffset(nextBeginOffset);
+        result.setMinOffset(minOffset);
+        result.setMaxOffset(maxOffset);
+        return result;
+    }
+
     public static PullResult found(List<InternalMessage> messages, long nextBeginOffset, long minOffset, long maxOffset) {
         PullResult result = new PullResult();
         result.setResponseCode(0);

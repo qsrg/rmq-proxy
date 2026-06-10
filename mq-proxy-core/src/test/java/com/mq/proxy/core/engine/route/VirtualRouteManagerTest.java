@@ -17,8 +17,10 @@ import java.util.Arrays;
 import java.util.Deque;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.Assert.*;
 
@@ -97,6 +99,28 @@ public class VirtualRouteManagerTest {
     }
 
     @Test
+    public void testGetAllRealBrokerAddrsIncludesMasterAndSlave() throws Exception {
+        TopicRouteInfo realRoute = new TopicRouteInfo();
+
+        TopicRouteInfo.BrokerData brokerData = new TopicRouteInfo.BrokerData();
+        brokerData.setBrokerName("broker-a");
+        Map<Long, String> brokerAddrs = new HashMap<>();
+        brokerAddrs.put(0L, "192.168.1.1:10911");
+        brokerAddrs.put(1L, "192.168.1.2:10911");
+        brokerData.setBrokerAddrs(brokerAddrs);
+        realRoute.setBrokerDatas(Collections.singletonList(brokerData));
+
+        setProxyAddr("10.0.0.1:8080");
+        routeManager.convertToVirtualRoute(realRoute, "TestTopic");
+
+        Set<String> allAddrs = new HashSet<>(routeManager.getAllRealBrokerAddrs());
+
+        assertEquals(new HashSet<>(Arrays.asList("192.168.1.1:10911", "192.168.1.2:10911")), allAddrs);
+        assertEquals("192.168.1.1:10911", routeManager.getRealBrokerAddr("broker-a"));
+        assertEquals("192.168.1.2:10911", routeManager.getRealBrokerAddr("broker-a", 1L));
+    }
+
+    @Test
     public void testRouteCacheMechanism() throws Exception {
         Field routeCacheField = VirtualRouteManager.class.getDeclaredField("routeCache");
         routeCacheField.setAccessible(true);
@@ -128,12 +152,12 @@ public class VirtualRouteManagerTest {
 
         routeCacheTimestamp.remove("CachedTopic");
         TopicRouteInfo expiredResult = routeManager.getRouteInfoByTopic("CachedTopic");
-        assertNull(expiredResult);
+        assertSame(cachedRoute, expiredResult);
 
         routeCache.put("ExpiredTopic", cachedRoute);
         routeCacheTimestamp.put("ExpiredTopic", System.currentTimeMillis() - 60000);
         TopicRouteInfo expiredCacheResult = routeManager.getRouteInfoByTopic("ExpiredTopic");
-        assertNull(expiredCacheResult);
+        assertSame(cachedRoute, expiredCacheResult);
 
         routeCache.put("RefreshTopic", cachedRoute);
         routeCacheTimestamp.put("RefreshTopic", System.currentTimeMillis());

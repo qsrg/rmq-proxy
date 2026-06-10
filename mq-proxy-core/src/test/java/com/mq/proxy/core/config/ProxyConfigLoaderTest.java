@@ -29,4 +29,14 @@ public class ProxyConfigLoaderTest {
 
         assertEquals("127.0.0.1:9876", config.getNamesrvAddr());
     }
+
+    @Test
+    public void shouldLoadPullExecutorThreadNumsFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("proxy.pullExecutorThreadNums", "96");
+
+        ProxyConfig config = ProxyConfigLoader.loadFromProperties(props);
+
+        assertEquals(96, config.getPullExecutorThreadNums());
+    }
 }

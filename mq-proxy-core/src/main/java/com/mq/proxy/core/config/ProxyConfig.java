@@ -7,6 +7,7 @@ public class ProxyConfig {
     private int connectTimeoutMillis = 3000;
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
+    private int pullExecutorThreadNums = Math.max(32, Runtime.getRuntime().availableProcessors() * 4);
     private long routeCacheExpireMillis = 30000;
 
     private boolean tlsEnabled = false;
@@ -61,6 +62,14 @@ public class ProxyConfig {
 
     public void setWorkerThreadNums(int workerThreadNums) {
         this.workerThreadNums = workerThreadNums;
+    }
+
+    public int getPullExecutorThreadNums() {
+        return pullExecutorThreadNums;
+    }
+
+    public void setPullExecutorThreadNums(int pullExecutorThreadNums) {
+        this.pullExecutorThreadNums = pullExecutorThreadNums;
     }
 
     public long getRouteCacheExpireMillis() {

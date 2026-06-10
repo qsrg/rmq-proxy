@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ConsumeRetryObservationTest {
 
     private static final String NAMESRV_ADDR =
-            System.getProperty("test.namesrvAddr", "127.0.0.1:9876");
+            System.getProperty("test.namesrvAddr", RocketMQIntegrationSupport.DEFAULT_NAMESRV_ADDR);
     private static final int MAX_RECONSUME_TIMES = 3;
 
     private EmbeddedRocketMQProxy proxy;

@@ -2,6 +2,7 @@ package com.mq.proxy.core.engine;
 
 import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RemotingCommand;
+import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.model.InternalMessage;
@@ -64,11 +65,11 @@ public class MessageEngine {
             brokerAddr = resolveBrokerAddr(brokerName, topic);
             return storageAdapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion, brokerAddr);
         } catch (Exception e) {
-            log.warn("pullMessage failed, fallback to notFound with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, subscription={}, expressionType={}, subVersion={}, brokerName={}, brokerAddr={}, fallbackNextBeginOffset={}",
+            log.warn("pullMessage failed, returning system error with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, subscription={}, expressionType={}, subVersion={}, brokerName={}, brokerAddr={}, preservedNextBeginOffset={}",
                     consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset,
                     suspendTimeoutMillis, subscription, expressionType, subVersion, brokerName, brokerAddr,
                     queueOffset, e);
-            return PullResult.notFound(queueOffset, 0, queueOffset);
+            return PullResult.fail(RemotingSysResponseCode.SYSTEM_ERROR, queueOffset, 0, queueOffset);
         }
     }
 

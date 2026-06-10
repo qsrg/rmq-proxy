@@ -16,7 +16,8 @@ import static org.junit.Assert.*;
 
 public class RocketMQIntegrationTest {
 
-    private static final String NAMESRV_ADDR = "127.0.0.1:9876";
+    private static final String NAMESRV_ADDR =
+            System.getProperty("test.namesrvAddr", RocketMQIntegrationSupport.DEFAULT_NAMESRV_ADDR);
     private static final String TEST_TOPIC = "PROXY_INTEGRATION_TEST";
     private static final String PRODUCER_GROUP = "PID_PROXY_TEST";
     private static final String CONSUMER_GROUP = "CID_PROXY_TEST";
