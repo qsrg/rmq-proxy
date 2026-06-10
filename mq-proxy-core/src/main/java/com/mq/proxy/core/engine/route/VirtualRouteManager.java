@@ -13,7 +13,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -104,10 +106,14 @@ public class VirtualRouteManager {
     }
 
     public List<String> getAllRealBrokerAddrs() {
-        if (this.brokerNameToRealAddr.isEmpty()) {
+        if (this.brokerNameAndIdToRealAddr.isEmpty()) {
             discoverBrokers();
         }
-        return new ArrayList<>(this.brokerNameToRealAddr.values());
+        Set<String> addrs = new LinkedHashSet<>(this.brokerNameAndIdToRealAddr.values());
+        if (addrs.isEmpty()) {
+            addrs.addAll(this.brokerNameToRealAddr.values());
+        }
+        return new ArrayList<>(addrs);
     }
 
     public void discoverBrokers() {
@@ -166,7 +172,8 @@ public class VirtualRouteManager {
                     }
                 }
             }
-            log.info("Discovered {} broker(s) from NameServer", this.brokerNameToRealAddr.size());
+            log.info("Discovered {} master broker(s), {} broker address(es) from NameServer",
+                    this.brokerNameToRealAddr.size(), this.brokerNameAndIdToRealAddr.size());
         } catch (Exception e) {
             log.warn("Failed to parse cluster info: {}", e.getMessage());
         }

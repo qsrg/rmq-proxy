@@ -59,12 +59,15 @@ public class MessageEngine {
     }
 
     public PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerName) {
+        String brokerAddr = null;
         try {
-            String brokerAddr = resolveBrokerAddr(brokerName, topic);
+            brokerAddr = resolveBrokerAddr(brokerName, topic);
             return storageAdapter.pullMessage(consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset, suspendTimeoutMillis, subscription, expressionType, subVersion, brokerAddr);
         } catch (Exception e) {
-            log.warn("pullMessage failed, fallback to notFound with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, brokerName={}, error={}",
-                    consumerGroup, topic, queueId, queueOffset, brokerName, e.getMessage());
+            log.warn("pullMessage failed, fallback to notFound with preserved offset. group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, subscription={}, expressionType={}, subVersion={}, brokerName={}, brokerAddr={}, fallbackNextBeginOffset={}",
+                    consumerGroup, topic, queueId, queueOffset, maxMsgNums, sysFlag, commitOffset,
+                    suspendTimeoutMillis, subscription, expressionType, subVersion, brokerName, brokerAddr,
+                    queueOffset, e);
             return PullResult.notFound(queueOffset, 0, queueOffset);
         }
     }

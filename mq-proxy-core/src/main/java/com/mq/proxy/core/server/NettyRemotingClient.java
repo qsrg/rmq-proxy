@@ -28,6 +28,7 @@ import java.io.InputStream;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -144,8 +145,8 @@ public class NettyRemotingClient {
     }
 
     public void shutdown() {
-        for (Channel channel : this.channelTable.values()) {
-            channel.close();
+        for (Map.Entry<String, Channel> entry : this.channelTable.entrySet()) {
+            closeChannel(entry.getKey(), entry.getValue(), "shutdown");
         }
         this.channelTable.clear();
         if (this.eventLoopGroup != null) {
@@ -192,8 +193,10 @@ public class NettyRemotingClient {
             channel = channelFuture.channel();
             Channel oldChannel = this.channelTable.put(addr, channel);
             if (oldChannel != null && oldChannel != channel) {
-                oldChannel.close();
+                closeChannel(addr, oldChannel, "replaced");
             }
+            log.info("NettyRemotingClient connected: addr={}, localAddress={}, remoteAddress={}",
+                    addr, channel.localAddress(), channel.remoteAddress());
             return channel;
         } finally {
             createChannelLock.unlock();
@@ -234,6 +237,7 @@ public class NettyRemotingClient {
     protected RemotingCommand invokeSyncSingle(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
         Channel channel = getAndCreateChannel(addr);
         if (channel == null || !channel.isActive()) {
+            closeChannel(addr, channel, "inactive-before-sync");
             throw new RuntimeException("channel is not active, addr: " + addr);
         }
         request.setOpaque(this.opaqueCounter.getAndIncrement());
@@ -246,6 +250,9 @@ public class NettyRemotingClient {
                 throw new RuntimeException("invokeSync timeout, addr: " + addr + ", timeoutMillis: " + timeoutMillis);
             }
             return response;
+        } catch (Exception e) {
+            closeChannel(addr, channel, "sync-failed");
+            throw e;
         } finally {
             this.responseTable.remove(request.getOpaque());
         }
@@ -282,10 +289,48 @@ public class NettyRemotingClient {
     protected void invokeOnewaySingle(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
         Channel channel = getAndCreateChannel(addr);
         if (channel == null || !channel.isActive()) {
+            closeChannel(addr, channel, "inactive-before-oneway");
             throw new RuntimeException("channel is not active, addr: " + addr);
         }
         request.markOnewayRPC();
         channel.writeAndFlush(request);
+    }
+
+    private void closeChannel(String addr, Channel channel, String reason) {
+        if (channel == null) {
+            this.channelTable.remove(addr);
+            log.info("NettyRemotingClient disconnected: addr={}, reason={}, channel=null", addr, reason);
+            return;
+        }
+        boolean removed = this.channelTable.remove(addr, channel);
+        if (!removed) {
+            Channel current = this.channelTable.get(addr);
+            if (current == channel) {
+                this.channelTable.remove(addr);
+            }
+        }
+        log.info("NettyRemotingClient disconnected: addr={}, localAddress={}, remoteAddress={}, reason={}",
+                addr, channel.localAddress(), channel.remoteAddress(), reason);
+        try {
+            channel.close();
+        } catch (Exception e) {
+            log.warn("Failed to close channel for addr {}: {}", addr, e.getMessage());
+        }
+    }
+
+    private void removeChannel(Channel channel, String reason) {
+        if (channel == null) {
+            return;
+        }
+        for (String addr : this.channelTable.keySet()) {
+            if (this.channelTable.remove(addr, channel)) {
+                log.info("NettyRemotingClient disconnected: addr={}, localAddress={}, remoteAddress={}, reason={}",
+                        addr, channel.localAddress(), channel.remoteAddress(), reason);
+                return;
+            }
+        }
+        log.debug("NettyRemotingClient disconnected: localAddress={}, remoteAddress={}, reason={}, addr=unknown",
+                channel.localAddress(), channel.remoteAddress(), reason);
     }
 
     public void setNamesrvAddr(String namesrvAddr) {
@@ -342,8 +387,15 @@ public class NettyRemotingClient {
         }
 
         @Override
+        public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            removeChannel(ctx.channel(), "remote-inactive");
+            super.channelInactive(ctx);
+        }
+
+        @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
             log.error("NettyClientHandler exception", cause);
+            removeChannel(ctx.channel(), "exception");
             ctx.close();
         }
     }

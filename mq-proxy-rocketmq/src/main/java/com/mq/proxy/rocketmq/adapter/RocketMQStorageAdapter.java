@@ -122,14 +122,16 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        log.debug("pullMessage sending to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, sysFlag={}, commitOffset={}, suspendTimeout={}",
-            targetAddr, consumerGroup, topic, queueId, queueOffset, finalSysFlag, commitOffset, suspendTimeoutMillis);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, suspendTimeoutMillis + 1000);
+        long timeoutMillis = suspendTimeoutMillis + 1000;
+        log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
+                targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, finalSysFlag, commitOffset,
+                suspendTimeoutMillis, timeoutMillis, subExpr, exprType, subVersion);
+        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, timeoutMillis);
 
-        log.debug("pullMessage response from broker: code={}, opaque={}, extFields={}, hasBody={}, serializeType={}",
-            response.getCode(), response.getOpaque(), response.getExtFields(),
-            response.getBody() != null ? response.getBody().length : 0,
-            response.getSerializeTypeCurrentRPC());
+        log.info("pullMessage response from broker: targetAddr={}, code={}, remark={}, opaque={}, extFields={}, bodySize={}, serializeType={}",
+                targetAddr, response.getCode(), response.getRemark(), response.getOpaque(), response.getExtFields(),
+                response.getBody() != null ? response.getBody().length : 0,
+                response.getSerializeTypeCurrentRPC());
 
         if (response.getExtFields() == null || response.getExtFields().isEmpty()) {
             log.warn("pullMessage response from broker has EMPTY extFields! code={}, topic={}, queueId={}, queueOffset={}",
@@ -149,8 +151,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         // 使用请求的queueOffset作为nextBeginOffset，避免consumer重置offset到0导致重复消费
         if (nextBeginOffset == -1L) {
             nextBeginOffset = queueOffset;
-            log.warn("pullMessage broker response missing nextBeginOffset, using queueOffset={} as fallback. topic={}, queueId={}",
-                queueOffset, topic, queueId);
+            log.warn("pullMessage broker response missing nextBeginOffset, using queueOffset as fallback. targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, responseCode={}",
+                    targetAddr, consumerGroup, topic, queueId, queueOffset, response.getCode());
         }
         if (minOffset == -1L) {
             minOffset = 0;
@@ -161,8 +163,8 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
         if ((response.getCode() == ResponseCode.PULL_NOT_FOUND || response.getCode() == ResponseCode.PULL_RETRY_IMMEDIATELY)
                 && queueOffset > 0 && nextBeginOffset < queueOffset) {
-            log.warn("pullMessage broker suggested rewind on not-found response, preserving queueOffset instead. topic={}, queueId={}, requestedOffset={}, brokerNextBeginOffset={}",
-                    topic, queueId, queueOffset, nextBeginOffset);
+            log.warn("pullMessage broker suggested rewind on not-found response, preserving queueOffset instead. targetAddr={}, group={}, topic={}, queueId={}, requestedOffset={}, brokerNextBeginOffset={}, responseCode={}",
+                    targetAddr, consumerGroup, topic, queueId, queueOffset, nextBeginOffset, response.getCode());
             nextBeginOffset = queueOffset;
         }
 
