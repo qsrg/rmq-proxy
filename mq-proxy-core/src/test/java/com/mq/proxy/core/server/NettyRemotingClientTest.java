@@ -5,6 +5,7 @@ import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.EventLoopGroup;
 import io.netty.handler.timeout.IdleStateEvent;
 import org.junit.Test;
 
@@ -18,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -31,6 +34,82 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class NettyRemotingClientTest {
+
+    @Test
+    public void testClientsShareInjectedRuntimeExecutors() throws Exception {
+        NettyClientConfig config = new NettyClientConfig();
+        config.setClientWorkerThreadNums(1);
+        config.setClientCallbackExecutorThreads(1);
+        NettyClientRuntime runtime = new NettyClientRuntime(config, "SharedRuntimeTest");
+        NettyRemotingClient first = new NettyRemotingClient(config, runtime);
+        NettyRemotingClient second = new NettyRemotingClient(config, runtime);
+
+        try {
+            first.start();
+            second.start();
+
+            assertSame(eventLoopGroup(first), eventLoopGroup(second));
+            assertSame(callbackExecutor(first), callbackExecutor(second));
+            assertSame(responseTableScanExecutor(first), responseTableScanExecutor(second));
+
+            first.shutdown();
+
+            assertFalse(runtime.isShutdown());
+        } finally {
+            second.shutdown();
+            runtime.shutdown();
+        }
+    }
+
+    @Test
+    public void testRuntimeUsesSingleSharedResponseScanLoopForRegistrations() throws Exception {
+        NettyClientConfig config = new NettyClientConfig();
+        config.setClientWorkerThreadNums(1);
+        config.setClientCallbackExecutorThreads(1);
+        NettyClientRuntime runtime = new NettyClientRuntime(config, "SharedScanTest");
+        AtomicReference<NettyClientRuntime.ResponseTableScanRegistration> firstRegistration = new AtomicReference<>();
+        AtomicReference<NettyClientRuntime.ResponseTableScanRegistration> secondRegistration = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger firstScans = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger secondScans = new java.util.concurrent.atomic.AtomicInteger();
+
+        try {
+            runtime.start();
+            firstRegistration.set(runtime.scheduleResponseTableScan(new Runnable() {
+                @Override
+                public void run() {
+                    firstScans.incrementAndGet();
+                }
+            }));
+            secondRegistration.set(runtime.scheduleResponseTableScan(new Runnable() {
+                @Override
+                public void run() {
+                    secondScans.incrementAndGet();
+                }
+            }));
+
+            Thread.sleep(1200L);
+            assertSame(runtime.getResponseTableScanFuture(), firstRegistration.get().getSharedFuture());
+            assertSame(runtime.getResponseTableScanFuture(), secondRegistration.get().getSharedFuture());
+            assertTrue(firstScans.get() > 0);
+            assertTrue(secondScans.get() > 0);
+
+            firstRegistration.get().cancel();
+            int firstAfterCancel = firstScans.get();
+            int secondAfterCancel = secondScans.get();
+            Thread.sleep(1200L);
+
+            assertEquals(firstAfterCancel, firstScans.get());
+            assertTrue(secondScans.get() > secondAfterCancel);
+        } finally {
+            if (firstRegistration.get() != null) {
+                firstRegistration.get().cancel();
+            }
+            if (secondRegistration.get() != null) {
+                secondRegistration.get().cancel();
+            }
+            runtime.shutdown();
+        }
+    }
 
     @Test
     public void testInvokeSyncFailsOverToNextNamesrvAddr() throws Exception {
@@ -236,6 +315,24 @@ public class NettyRemotingClientTest {
         Field field = NettyRemotingClient.class.getDeclaredField("responseTable");
         field.setAccessible(true);
         return (ConcurrentHashMap<Integer, ResponseFuture>) field.get(client);
+    }
+
+    private static EventLoopGroup eventLoopGroup(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("eventLoopGroup");
+        field.setAccessible(true);
+        return (EventLoopGroup) field.get(client);
+    }
+
+    private static ExecutorService callbackExecutor(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("callbackExecutor");
+        field.setAccessible(true);
+        return (ExecutorService) field.get(client);
+    }
+
+    private static ScheduledExecutorService responseTableScanExecutor(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("responseTableScanExecutor");
+        field.setAccessible(true);
+        return (ScheduledExecutorService) field.get(client);
     }
 
     private static class RecordingNettyRemotingClient extends NettyRemotingClient {

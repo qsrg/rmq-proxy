@@ -6,6 +6,8 @@ import com.mq.proxy.core.protocol.heartbeat.HeartbeatData;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
+import com.mq.proxy.core.server.InvokeCallback;
+import com.mq.proxy.core.server.NettyClientRuntime;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
@@ -41,7 +43,9 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     private ScheduledExecutorService scheduledExecutor;
 
     private final ConcurrentHashMap<String, NettyRemotingClient> clientChannelPool = new ConcurrentHashMap<>();
+    private final Set<String> inFlightHeartbeats = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private final NettyClientConfig nettyClientConfig;
+    private final NettyClientRuntime heartbeatClientRuntime;
     private NettyRemotingServer remotingServer;
 
     public void setRemotingServer(NettyRemotingServer remotingServer) {
@@ -60,6 +64,7 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
         this.storageAdapter = storageAdapter;
         this.virtualRouteManager = virtualRouteManager;
         this.nettyClientConfig = new NettyClientConfig();
+        this.heartbeatClientRuntime = new NettyClientRuntime(this.nettyClientConfig, "BrokerHeartbeatClient");
     }
 
     public void start() {
@@ -97,6 +102,8 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
             }
         }
         clientChannelPool.clear();
+        inFlightHeartbeats.clear();
+        this.heartbeatClientRuntime.shutdown();
         log.info("ProxyBrokerHeartbeatService shutdown");
     }
 
@@ -160,17 +167,17 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     private void sendHeartbeatToAllBrokers() {
         List<String> brokerAddrs = resolveBrokerAddrs();
         if (brokerAddrs.isEmpty()) {
-            log.info("No real broker addresses available, skipping heartbeat to broker");
+            log.debug("No real broker addresses available, skipping heartbeat to broker");
             return;
         }
 
         List<ClientConnectionManager.ClientInfo> clientInfos = clientConnectionManager.getAllClientInfos();
         if (clientInfos.isEmpty()) {
-            log.info("No active clients, skipping heartbeat to broker");
+            log.debug("No active clients, skipping heartbeat to broker");
             return;
         }
 
-        log.info("Sending heartbeat to brokers {} for {} clients", brokerAddrs, clientInfos.size());
+        log.debug("Sending heartbeat to brokers {} for {} clients", brokerAddrs, clientInfos.size());
 
         for (ClientConnectionManager.ClientInfo clientInfo : clientInfos) {
             sendHeartbeatForClient(clientInfo, brokerAddrs);
@@ -189,7 +196,7 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
 
     private void sendHeartbeatForClient(ClientConnectionManager.ClientInfo clientInfo, List<String> brokerAddrs) {
         String clientId = clientInfo.getClientId();
-        log.info("sendHeartbeatForClient: clientId={}, consumerGroups={}, producerGroups={}",
+        log.debug("sendHeartbeatForClient: clientId={}, consumerGroups={}, producerGroups={}",
                 clientId, clientInfo.getConsumerGroups(), clientInfo.getProducerGroups());
         HeartbeatData heartbeatData = buildHeartbeatDataForClient(clientInfo);
         if (heartbeatData == null) {
@@ -201,26 +208,41 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
         byte[] body = heartbeatData.encode();
 
         for (String brokerAddr : brokerAddrs) {
+            final String heartbeatKey = clientId + "@" + brokerAddr;
+            if (!inFlightHeartbeats.add(heartbeatKey)) {
+                log.debug("Skip in-flight heartbeat to broker {} for client {}", brokerAddr, clientId);
+                continue;
+            }
             try {
-                RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
+                final RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.HEART_BEAT, null);
                 request.setLanguage(LanguageCode.JAVA);
                 request.setBody(body);
-                NettyRemotingClient client = getOrCreateClient(clientId);
-                Channel channel = client.getAndCreateChannel(brokerAddr);
-                if (channel == null || !channel.isActive()) {
-                    log.warn("Channel not active for clientId={}, brokerAddr={}", clientId, brokerAddr);
-                    continue;
-                }
-                RemotingCommand response = client.invokeSync(brokerAddr, request, 5000);
-                if (response != null && response.getCode() == RemotingSysResponseCode.SUCCESS) {
-                    log.info("Proxy heartbeat to broker {} for client {} SUCCESS, consumerGroups={}, producerGroups={}",
-                            brokerAddr, clientId, heartbeatData.getConsumerDataSet().size(), heartbeatData.getProducerDataSet().size());
-                } else {
-                    log.warn("Proxy heartbeat to broker {} for client {} FAILED, responseCode={}, remark={}",
-                            brokerAddr, clientId, response != null ? response.getCode() : "null",
-                            response != null ? response.getRemark() : "null");
-                }
+                final NettyRemotingClient client = getOrCreateClient(clientId);
+                final int consumerGroupCount = heartbeatData.getConsumerDataSet().size();
+                final int producerGroupCount = heartbeatData.getProducerDataSet().size();
+                client.invokeAsync(brokerAddr, request, 5000, new InvokeCallback() {
+                    @Override
+                    public void operationSucceed(RemotingCommand response) {
+                        inFlightHeartbeats.remove(heartbeatKey);
+                        if (response != null && response.getCode() == RemotingSysResponseCode.SUCCESS) {
+                            log.debug("Proxy heartbeat to broker {} for client {} SUCCESS, consumerGroups={}, producerGroups={}",
+                                    brokerAddr, clientId, consumerGroupCount, producerGroupCount);
+                        } else {
+                            log.warn("Proxy heartbeat to broker {} for client {} FAILED, responseCode={}, remark={}",
+                                    brokerAddr, clientId, response != null ? response.getCode() : "null",
+                                    response != null ? response.getRemark() : "null");
+                        }
+                    }
+
+                    @Override
+                    public void operationFail(Throwable throwable) {
+                        inFlightHeartbeats.remove(heartbeatKey);
+                        log.warn("Proxy heartbeat to broker {} for client {} exception: {}",
+                                brokerAddr, clientId, throwable != null ? throwable.getMessage() : "unknown");
+                    }
+                });
             } catch (Exception e) {
+                inFlightHeartbeats.remove(heartbeatKey);
                 log.warn("Proxy heartbeat to broker {} for client {} exception: {}", brokerAddr, clientId, e.getMessage(), e);
             }
         }
@@ -342,7 +364,7 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     }
 
     protected NettyRemotingClient createClient(String clientId) {
-        NettyRemotingClient client = new NettyRemotingClient(nettyClientConfig);
+        NettyRemotingClient client = new NettyRemotingClient(nettyClientConfig, heartbeatClientRuntime);
         client.registerProcessor(RequestCode.GET_CONSUMER_RUNNING_INFO,
                 createBrokerToClientForwardProcessor(clientId, RequestCode.GET_CONSUMER_RUNNING_INFO));
         client.registerProcessor(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED,

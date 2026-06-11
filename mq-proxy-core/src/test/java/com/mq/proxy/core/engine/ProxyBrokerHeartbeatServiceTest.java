@@ -6,26 +6,54 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
+import com.mq.proxy.core.server.InvokeCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import io.netty.channel.Channel;
+import io.netty.channel.EventLoopGroup;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class ProxyBrokerHeartbeatServiceTest {
+
+    @Test
+    public void testCreatedHeartbeatClientsShareNettyRuntimeExecutors() throws Exception {
+        ProxyBrokerHeartbeatService service = new ProxyBrokerHeartbeatService(
+                new ClientConnectionManager(),
+                mock(StorageAdapter.class),
+                "127.0.0.1",
+                10911,
+                new TestVirtualRouteManager("broker-a:10911"));
+
+        try {
+            NettyRemotingClient first = service.createClientEntry("client-001");
+            NettyRemotingClient second = service.createClientEntry("client-002");
+
+            assertTrue(first != second);
+            assertSame(eventLoopGroup(first), eventLoopGroup(second));
+            assertSame(callbackExecutor(first), callbackExecutor(second));
+            assertSame(responseTableScanExecutor(first), responseTableScanExecutor(second));
+        } finally {
+            service.shutdown();
+        }
+    }
 
     @Test
     public void testUnregisterClientFansOutAllProducerAndConsumerGroups() {
@@ -143,6 +171,26 @@ public class ProxyBrokerHeartbeatServiceTest {
         assertTrue(forwardedSub.getTagsSet().contains("TagA"));
     }
 
+    @Test
+    public void testHeartbeatUsesAsyncInvoke() {
+        ClientConnectionManager manager = new ClientConnectionManager();
+        Channel consumerChannel = mock(Channel.class);
+        when(consumerChannel.isActive()).thenReturn(true);
+        manager.registerConsumer(consumerChannel, "client-001", "group-a",
+                "CONSUME_PASSIVELY", "CLUSTERING", "CONSUME_FROM_LAST_OFFSET", Collections.emptySet());
+
+        RecordingNettyRemotingClient remotingClient = new RecordingNettyRemotingClient();
+        remotingClient.channelActive = true;
+        TestProxyBrokerHeartbeatService service =
+                new TestProxyBrokerHeartbeatService(manager, new TestVirtualRouteManager("broker-a:10911"), remotingClient);
+
+        service.sendHeartbeat();
+
+        assertTrue(remotingClient.invokedAddrs.isEmpty());
+        assertEquals(Collections.singletonList("broker-a:10911"), remotingClient.asyncInvokedAddrs);
+        assertEquals(1, remotingClient.sentCommands.size());
+    }
+
     private static void assertContainsOnly(List<RemotingCommand> actual, ExpectedRequest... expectedRequests) {
         List<ExpectedRequest> actualRequests = new ArrayList<>();
         for (RemotingCommand command : actual) {
@@ -163,6 +211,24 @@ public class ProxyBrokerHeartbeatServiceTest {
 
     private static ExpectedRequest request(String clientId, String producerGroup, String consumerGroup) {
         return new ExpectedRequest(clientId, producerGroup, consumerGroup);
+    }
+
+    private static EventLoopGroup eventLoopGroup(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("eventLoopGroup");
+        field.setAccessible(true);
+        return (EventLoopGroup) field.get(client);
+    }
+
+    private static ExecutorService callbackExecutor(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("callbackExecutor");
+        field.setAccessible(true);
+        return (ExecutorService) field.get(client);
+    }
+
+    private static ScheduledExecutorService responseTableScanExecutor(NettyRemotingClient client) throws Exception {
+        Field field = NettyRemotingClient.class.getDeclaredField("responseTableScanExecutor");
+        field.setAccessible(true);
+        return (ScheduledExecutorService) field.get(client);
     }
 
     private static class TestProxyBrokerHeartbeatService extends ProxyBrokerHeartbeatService {
@@ -220,6 +286,7 @@ public class ProxyBrokerHeartbeatServiceTest {
 
     private static class RecordingNettyRemotingClient extends NettyRemotingClient {
         private final List<String> invokedAddrs = new ArrayList<>();
+        private final List<String> asyncInvokedAddrs = new ArrayList<>();
         private final List<RemotingCommand> sentCommands = new ArrayList<>();
         private boolean shutdownCalled;
         private boolean channelActive;
@@ -237,6 +304,13 @@ public class ProxyBrokerHeartbeatServiceTest {
             invokedAddrs.add(addr);
             sentCommands.add(request);
             return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS, "OK");
+        }
+
+        @Override
+        public void invokeAsync(String addr, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback) {
+            asyncInvokedAddrs.add(addr);
+            sentCommands.add(request);
+            invokeCallback.operationSucceed(RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS, "OK"));
         }
 
         @Override

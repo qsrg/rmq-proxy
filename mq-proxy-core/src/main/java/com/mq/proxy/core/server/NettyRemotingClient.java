@@ -12,7 +12,6 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
@@ -36,11 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -50,6 +45,8 @@ public class NettyRemotingClient {
     private static final Logger log = LoggerFactory.getLogger(NettyRemotingClient.class);
 
     private final NettyClientConfig nettyClientConfig;
+    private final NettyClientRuntime nettyClientRuntime;
+    private final boolean ownsRuntime;
     private Bootstrap bootstrap;
     private EventLoopGroup eventLoopGroup;
     private SslContext sslContext;
@@ -59,11 +56,22 @@ public class NettyRemotingClient {
     private final AtomicInteger addressSelector = new AtomicInteger(0);
     private ExecutorService callbackExecutor;
     private ScheduledExecutorService responseTableScanExecutor;
+    private NettyClientRuntime.ResponseTableScanRegistration responseTableScanRegistration;
     private final ConcurrentHashMap<Integer, RemotingProcessor> processorTable = new ConcurrentHashMap<>();
     private final ReentrantLock createChannelLock = new ReentrantLock();
 
     public NettyRemotingClient(NettyClientConfig nettyClientConfig) {
+        this(nettyClientConfig, new NettyClientRuntime(nettyClientConfig, "NettyClient"), true);
+    }
+
+    public NettyRemotingClient(NettyClientConfig nettyClientConfig, NettyClientRuntime nettyClientRuntime) {
+        this(nettyClientConfig, nettyClientRuntime, false);
+    }
+
+    private NettyRemotingClient(NettyClientConfig nettyClientConfig, NettyClientRuntime nettyClientRuntime, boolean ownsRuntime) {
         this.nettyClientConfig = nettyClientConfig;
+        this.nettyClientRuntime = nettyClientRuntime;
+        this.ownsRuntime = ownsRuntime;
         if (nettyClientConfig.isTlsEnabled()) {
             try {
                 this.sslContext = buildSslContext();
@@ -113,33 +121,16 @@ public class NettyRemotingClient {
         return builder.build();
     }
 
-    public void start() {
-        this.eventLoopGroup = new NioEventLoopGroup(this.nettyClientConfig.getClientWorkerThreadNums());
-        this.callbackExecutor = new ThreadPoolExecutor(
-            nettyClientConfig.getClientCallbackExecutorThreads() > 0
-                ? nettyClientConfig.getClientCallbackExecutorThreads()
-                : 4,
-            nettyClientConfig.getClientCallbackExecutorThreads() > 0
-                ? nettyClientConfig.getClientCallbackExecutorThreads()
-                : 4,
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<Runnable>(10000),
-            new ThreadFactory() {
-                private final AtomicInteger threadIndex = new AtomicInteger(0);
-                @Override
-                public Thread newThread(Runnable r) {
-                    return new Thread(r, "NettyClientCallbackThread_" + threadIndex.incrementAndGet());
-                }
-            });
-        this.responseTableScanExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
-            private final AtomicInteger threadIndex = new AtomicInteger(0);
+    public synchronized void start() {
+        if (this.bootstrap != null) {
+            return;
+        }
 
-            @Override
-            public Thread newThread(Runnable r) {
-                return new Thread(r, "NettyClientResponseScanThread_" + threadIndex.incrementAndGet());
-            }
-        });
-        this.responseTableScanExecutor.scheduleAtFixedRate(new Runnable() {
+        this.nettyClientRuntime.start();
+        this.eventLoopGroup = this.nettyClientRuntime.getEventLoopGroup();
+        this.callbackExecutor = this.nettyClientRuntime.getCallbackExecutor();
+        this.responseTableScanExecutor = this.nettyClientRuntime.getResponseTableScanExecutor();
+        this.responseTableScanRegistration = this.nettyClientRuntime.scheduleResponseTableScan(new Runnable() {
             @Override
             public void run() {
                 try {
@@ -148,7 +139,7 @@ public class NettyRemotingClient {
                     log.warn("scanResponseTable exception: {}", e.getMessage());
                 }
             }
-        }, 1000L, 1000L, TimeUnit.MILLISECONDS);
+        });
 
         this.bootstrap = new Bootstrap();
         this.bootstrap.group(this.eventLoopGroup)
@@ -171,26 +162,24 @@ public class NettyRemotingClient {
                 });
     }
 
-    public void shutdown() {
+    public synchronized void shutdown() {
+        if (this.responseTableScanRegistration != null) {
+            this.responseTableScanRegistration.cancel();
+            this.responseTableScanRegistration = null;
+        }
         for (Map.Entry<String, Channel> entry : this.channelTable.entrySet()) {
             closeChannel(entry.getKey(), entry.getValue(), "shutdown");
         }
         this.channelTable.clear();
-        if (this.eventLoopGroup != null) {
-            this.eventLoopGroup.shutdownGracefully();
-        }
-        if (this.responseTableScanExecutor != null) {
-            this.responseTableScanExecutor.shutdown();
-        }
-        if (this.callbackExecutor != null) {
-            this.callbackExecutor.shutdown();
-        }
         for (ResponseFuture responseFuture : this.responseTable.values()) {
             if (responseFuture.fail(new RuntimeException("client shutdown"))) {
                 executeInvokeCallback(responseFuture);
             }
         }
         this.responseTable.clear();
+        if (this.ownsRuntime) {
+            this.nettyClientRuntime.shutdown();
+        }
     }
 
     public Channel getAndCreateChannel(String addr) throws Exception {
