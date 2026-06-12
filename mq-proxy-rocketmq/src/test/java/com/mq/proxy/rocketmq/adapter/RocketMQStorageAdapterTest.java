@@ -117,6 +117,33 @@ public class RocketMQStorageAdapterTest {
         assertEquals(30000L, remotingClient.lastTimeoutMillis);
     }
 
+    @Test
+    public void testPullMessageAsyncRoundRobinsConfiguredRemotingClientPool() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        CountingAsyncRemotingClient first = new CountingAsyncRemotingClient(createPullNotFoundResponse(2L, 0L, 2L));
+        CountingAsyncRemotingClient second = new CountingAsyncRemotingClient(createPullNotFoundResponse(3L, 0L, 3L));
+        setField(adapter, "initialized", true);
+        setField(adapter, "remotingClients", new NettyRemotingClient[]{first, second});
+
+        PullMessageCallback noopCallback = new PullMessageCallback() {
+            @Override
+            public void onSuccess(PullResult pullResult) {
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+            }
+        };
+
+        adapter.pullMessageAsync("CID_TEST", "TestTopic", 0, 2L, 32, 0, 2L,
+                15000L, "*", "TAG", 0L, "127.0.0.1:10911", noopCallback);
+        adapter.pullMessageAsync("CID_TEST", "TestTopic", 0, 3L, 32, 0, 3L,
+                15000L, "*", "TAG", 0L, "127.0.0.1:10911", noopCallback);
+
+        assertEquals(1, first.invokeCount);
+        assertEquals(1, second.invokeCount);
+    }
+
     private static RemotingCommand createPullNotFoundResponse(long nextBeginOffset, long minOffset, long maxOffset) {
         RemotingCommand response = RemotingCommand.createResponseCommand(ResponseCode.PULL_NOT_FOUND);
         HashMap<String, String> extFields = new HashMap<>();
@@ -194,6 +221,20 @@ public class RocketMQStorageAdapterTest {
         @Override
         public void invokeAsync(String addr, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback) {
             this.lastTimeoutMillis = timeoutMillis;
+            super.invokeAsync(addr, request, timeoutMillis, invokeCallback);
+        }
+    }
+
+    private static class CountingAsyncRemotingClient extends AsyncFixedResponseRemotingClient {
+        private int invokeCount;
+
+        CountingAsyncRemotingClient(RemotingCommand response) {
+            super(response);
+        }
+
+        @Override
+        public void invokeAsync(String addr, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback) {
+            this.invokeCount++;
             super.invokeAsync(addr, request, timeoutMillis, invokeCallback);
         }
     }

@@ -9,6 +9,9 @@ public class ProxyConfig {
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
     private int pullExecutorThreadNums = Math.max(32, Runtime.getRuntime().availableProcessors() * 4);
     private long routeCacheExpireMillis = 30000;
+    private int upstreamClientAsyncSemaphoreValue = 4096;
+    private int upstreamClientChannelPoolSize = 4;
+    private int upstreamClientKeepAliveIntervalSeconds = 30;
 
     private boolean tlsEnabled = false;
     private String tlsCertPath;
@@ -78,6 +81,30 @@ public class ProxyConfig {
 
     public void setRouteCacheExpireMillis(long routeCacheExpireMillis) {
         this.routeCacheExpireMillis = routeCacheExpireMillis;
+    }
+
+    public int getUpstreamClientAsyncSemaphoreValue() {
+        return upstreamClientAsyncSemaphoreValue;
+    }
+
+    public void setUpstreamClientAsyncSemaphoreValue(int upstreamClientAsyncSemaphoreValue) {
+        this.upstreamClientAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+    }
+
+    public int getUpstreamClientChannelPoolSize() {
+        return upstreamClientChannelPoolSize;
+    }
+
+    public void setUpstreamClientChannelPoolSize(int upstreamClientChannelPoolSize) {
+        this.upstreamClientChannelPoolSize = upstreamClientChannelPoolSize;
+    }
+
+    public int getUpstreamClientKeepAliveIntervalSeconds() {
+        return upstreamClientKeepAliveIntervalSeconds;
+    }
+
+    public void setUpstreamClientKeepAliveIntervalSeconds(int upstreamClientKeepAliveIntervalSeconds) {
+        this.upstreamClientKeepAliveIntervalSeconds = upstreamClientKeepAliveIntervalSeconds;
     }
 
     public boolean isTlsEnabled() {

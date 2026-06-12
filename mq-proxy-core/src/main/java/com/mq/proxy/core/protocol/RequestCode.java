@@ -26,6 +26,7 @@ public class RequestCode {
     public static final int UNLOCK_BATCH_MQ = 42;
     public static final int GET_ALL_CONSUMER_OFFSET = 43;
     public static final int GET_ALL_DELAY_OFFSET = 45;
+    public static final int CHECK_CLIENT_CONFIG = 46;
 
     // Broker config & runtime
     public static final int UPDATE_BROKER_CONFIG = 25;

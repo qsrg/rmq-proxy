@@ -24,10 +24,13 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -198,6 +201,28 @@ public class NettyRemotingClientTest {
     }
 
     @Test
+    public void testClientHandlerSendsKeepAliveOnWriterIdleWhenConfigured() throws Exception {
+        NettyClientConfig config = new NettyClientConfig();
+        config.setClientKeepAliveRequestCode(RequestCode.CHECK_CLIENT_CONFIG);
+        config.setClientKeepAliveIntervalSeconds(30);
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient(config);
+        Channel channel = mock(Channel.class);
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        client.newHandler().userEventTriggered(ctx, IdleStateEvent.WRITER_IDLE_STATE_EVENT);
+
+        verify(ctx).writeAndFlush(argThat(argument -> {
+            RemotingCommand command = (RemotingCommand) argument;
+            return command.getCode() == RequestCode.CHECK_CLIENT_CONFIG && command.isOnewayRPC()
+                    && command.getBody() == null;
+        }));
+        verify(ctx, never()).close();
+        assertSame(channel, channelTable(client).get("171.31.208.1:9876"));
+    }
+
+    @Test
     public void testInvokeAsyncCallbackReceivesResponse() throws Exception {
         ExposedNettyRemotingClient client = new ExposedNettyRemotingClient();
         Channel channel = mock(Channel.class);
@@ -230,6 +255,53 @@ public class NettyRemotingClientTest {
         assertTrue(latch.await(1, TimeUnit.SECONDS));
         assertSame(response, callbackResponse.get());
         assertTrue(responseTable(client).isEmpty());
+    }
+
+    @Test
+    public void testInvokeAsyncRejectsWhenClientAsyncSemaphoreExhausted() throws Exception {
+        NettyClientConfig config = new NettyClientConfig();
+        config.setClientAsyncSemaphoreValue(1);
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient(config);
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+        client.setFixedChannel(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        client.invokeAsync("171.31.208.1:9876",
+                RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null),
+                3000,
+                new InvokeCallback() {
+                    @Override
+                    public void operationSucceed(RemotingCommand response) {
+                    }
+
+                    @Override
+                    public void operationFail(Throwable throwable) {
+                    }
+                });
+
+        CountDownLatch rejectedLatch = new CountDownLatch(1);
+        AtomicReference<Throwable> rejected = new AtomicReference<>();
+        client.invokeAsync("171.31.208.1:9876",
+                RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null),
+                3000,
+                new InvokeCallback() {
+                    @Override
+                    public void operationSucceed(RemotingCommand response) {
+                    }
+
+                    @Override
+                    public void operationFail(Throwable throwable) {
+                        rejected.set(throwable);
+                        rejectedLatch.countDown();
+                    }
+                });
+
+        assertTrue(rejectedLatch.await(1, TimeUnit.SECONDS));
+        assertNotNull(rejected.get());
+        assertEquals("too many async requests, addr: 171.31.208.1:9876, limit: 1",
+                rejected.get().getMessage());
+        assertEquals(1, responseTable(client).size());
     }
 
     @Test
@@ -375,6 +447,10 @@ public class NettyRemotingClientTest {
 
         ExposedNettyRemotingClient() {
             super(new NettyClientConfig());
+        }
+
+        ExposedNettyRemotingClient(NettyClientConfig config) {
+            super(config);
         }
 
         RemotingCommand invokeOne(String addr, RemotingCommand request, long timeoutMillis) throws Exception {

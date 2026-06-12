@@ -7,6 +7,8 @@ public class NettyClientConfig {
     private int connectTimeoutMillis = 3000;
     private int channelNotActiveInterval = 60000;
     private int clientChannelMaxIdleTimeSeconds = 120;
+    private int clientKeepAliveIntervalSeconds = 0;
+    private int clientKeepAliveRequestCode = 0;
     private int clientWorkerThreadNums = 4;
     private int clientCallbackExecutorThreads = Runtime.getRuntime().availableProcessors();
 
@@ -61,6 +63,26 @@ public class NettyClientConfig {
 
     public void setClientChannelMaxIdleTimeSeconds(int clientChannelMaxIdleTimeSeconds) {
         this.clientChannelMaxIdleTimeSeconds = clientChannelMaxIdleTimeSeconds;
+    }
+
+    public int getClientKeepAliveIntervalSeconds() {
+        return clientKeepAliveIntervalSeconds;
+    }
+
+    public void setClientKeepAliveIntervalSeconds(int clientKeepAliveIntervalSeconds) {
+        this.clientKeepAliveIntervalSeconds = clientKeepAliveIntervalSeconds;
+    }
+
+    public int getClientKeepAliveRequestCode() {
+        return clientKeepAliveRequestCode;
+    }
+
+    public void setClientKeepAliveRequestCode(int clientKeepAliveRequestCode) {
+        this.clientKeepAliveRequestCode = clientKeepAliveRequestCode;
+    }
+
+    public boolean isClientKeepAliveEnabled() {
+        return clientKeepAliveRequestCode > 0 && clientKeepAliveIntervalSeconds > 0;
     }
 
     public int getClientWorkerThreadNums() {

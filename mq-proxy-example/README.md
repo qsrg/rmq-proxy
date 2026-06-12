@@ -21,7 +21,7 @@ mq-proxy-example/
 │   ├── consumer/            # 消费者示例
 │   │   └── PullConsumer.java               # Pull拉取模式示例
 │   └── benchmark/           # 性能测试
-│       └── BenchmarkProducer.java          # 性能压测示例
+│       └── RocketMQProxyBenchmark.java     # 原生客户端压测入口
 └── pom.xml
 ```
 
@@ -199,23 +199,221 @@ producer.shutdown();
 
 ### 四、性能测试示例
 
-#### BenchmarkProducer - 性能压测
+#### RocketMQProxyBenchmark - 原生客户端压测
 
-测试 Proxy SDK 在高并发场景下的性能：
-- 多线程并发发送
-- 统计 TPS、延迟、成功率
-- 监控数据分析
+使用原生 RocketMQ Client 压测 Proxy 或直连 NameServer 基线。脚本不绕过 NameServer 协议：
 
-**测试参数：**
-- 并发线程数：10
-- 每线程消息数：1000
-- 总消息数：10000
+- `--target proxy`：客户端 `namesrvAddr` 使用 `--proxyAddrs`，用于压测 Proxy。
+- `--target direct`：客户端 `namesrvAddr` 使用 `--namesrvAddrs`，用于直连 RocketMQ NameServer 做基线对比。
+- 多台压测机运行同一命令并配置不同 `--instanceId`，即可做分布式压测。
 
-**性能指标：**
-- 平均 TPS
-- 平均延迟
-- 最大/最小延迟
-- 成功率
+**Proxy 压测示例：**
+
+```bash
+cd /Users/wcf/java-project/rmq
+./mq-proxy-example/bin/benchmark.sh \
+  --target proxy \
+  --proxyAddrs "127.0.0.1:10913" \
+  --topic BenchmarkTopic \
+  --mode mixed \
+  --producerThreads 16 \
+  --consumerThreads 8 \
+  --messageSize 1024 \
+  --warmupSeconds 30 \
+  --durationSeconds 300 \
+  --reportIntervalSeconds 10 \
+  --instanceId node-a \
+  --output target/benchmark-proxy-node-a.json
+```
+
+**直连 RocketMQ NameServer 基线示例：**
+
+```bash
+./mq-proxy-example/bin/benchmark.sh \
+  --target direct \
+  --namesrvAddrs "10.0.0.1:9876;10.0.0.2:9876" \
+  --topic BenchmarkTopic \
+  --mode mixed \
+  --producerThreads 16 \
+  --consumerThreads 8 \
+  --messageSize 1024 \
+  --warmupSeconds 30 \
+  --durationSeconds 300 \
+  --instanceId direct-node-a \
+  --output target/benchmark-direct-node-a.json
+```
+
+**关键参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--target` | `proxy` | `proxy` 或 `direct` |
+| `--proxyAddrs` | - | Proxy 地址，多个用分号分隔；`target=proxy` 时必填 |
+| `--namesrvAddrs` | - | RocketMQ NameServer 地址，多个用分号分隔；`target=direct` 时必填 |
+| `--mode` | `mixed` | `produce`、`consume`、`mixed` |
+| `--producerThreads` | `8` | 发送线程数 |
+| `--consumerThreads` | `4` | PushConsumer 消费线程数 |
+| `--messageSize` | `1024` | 消息体大小，单位字节 |
+| `--warmupSeconds` | `30` | 预热时长，预热数据不计入最终结果 |
+| `--durationSeconds` | `300` | 正式统计时长 |
+| `--reportIntervalSeconds` | `10` | 控制台周期报告间隔 |
+| `--instanceId` | 自动生成 | 分布式压测节点标识 |
+| `--output` | `target/benchmark-result.json` | 最终 JSON 结果路径 |
+
+**输出指标：**
+
+- 生产：成功 TPS、成功数、失败数、错误率、发送 RT p50/p90/p99/max。
+- 消费：成功 TPS、成功数、失败数、重复数、消费处理 RT、端到端消费延迟 p50/p90/p99/max。
+- 最终结果会写入 JSON 文件，便于多节点汇总。
+
+#### 测试环境压测流程
+
+测试环境建议把 Proxy 服务和压测客户端分开部署：Proxy 机器只运行 `mq-proxy-standalone`，压测机只运行 `mq-proxy-example` 的 benchmark 脚本。多台压测机可以同时连接同一组 Proxy 地址，用不同 `--instanceId` 区分结果。
+
+**1. 打包 Proxy 和压测客户端**
+
+在项目根目录执行：
+
+```bash
+mvn clean package -DskipTests
+```
+
+主要产物：
+
+```text
+mq-proxy-standalone/target/mq-proxy-1.0.1-SNAPSHOT.tar.gz
+mq-proxy-example/target/classes/
+mq-proxy-example/target/lib/
+mq-proxy-example/bin/benchmark.sh
+```
+
+**2. 部署并启动 Proxy**
+
+把 `mq-proxy-standalone/target/mq-proxy-1.0.1-SNAPSHOT.tar.gz` 上传到 Proxy 机器，解压：
+
+```bash
+tar -zxvf mq-proxy-1.0.1-SNAPSHOT.tar.gz
+cd mq-proxy
+```
+
+修改 `conf/proxy.properties`：
+
+```properties
+proxy.listenPort=10913
+proxy.host=测试环境Proxy机器IP
+proxy.namesrvAddr=namesrv1:9876;namesrv2:9876
+proxy.workerThreadNums=8
+proxy.pullExecutorThreadNums=32
+proxy.upstreamClientAsyncSemaphoreValue=4096
+proxy.upstreamClientChannelPoolSize=4
+proxy.upstreamClientKeepAliveIntervalSeconds=30
+```
+
+启动并检查日志：
+
+```bash
+sh bin/proxy.sh start
+tail -f logs/proxy.log
+```
+
+日志中看到 `Proxy started successfully` 表示启动完成。
+
+**3. 创建压测 Topic**
+
+先确认 RocketMQ 集群名：
+
+```bash
+sh bin/mqadmin clusterList -n "namesrv1:9876;namesrv2:9876"
+```
+
+创建压测 Topic：
+
+```bash
+sh bin/mqadmin updateTopic \
+  -n "namesrv1:9876;namesrv2:9876" \
+  -c DefaultCluster \
+  -t BenchmarkTopic \
+  -r 8 \
+  -w 8
+```
+
+如果集群名不是 `DefaultCluster`，把 `-c` 改成实际集群名。生产和消费队列数量建议按压测规模调整，第一轮可以用 `8` 或 `16`。
+
+**4. 部署压测客户端**
+
+把以下内容上传到压测机，保持相对目录结构：
+
+```text
+mq-proxy-example/target/classes/
+mq-proxy-example/target/lib/
+mq-proxy-example/bin/benchmark.sh
+```
+
+也可以在压测机拉取代码后直接打包：
+
+```bash
+mvn package -pl mq-proxy-example -DskipTests
+```
+
+**5. 运行 Proxy 压测**
+
+```bash
+./mq-proxy-example/bin/benchmark.sh \
+  --target proxy \
+  --proxyAddrs "proxy1:10913;proxy2:10913" \
+  --topic BenchmarkTopic \
+  --mode mixed \
+  --producerThreads 16 \
+  --consumerThreads 8 \
+  --messageSize 1024 \
+  --warmupSeconds 30 \
+  --durationSeconds 300 \
+  --reportIntervalSeconds 10 \
+  --instanceId proxy-node-a \
+  --output target/benchmark-proxy-node-a.json
+```
+
+分布式压测时，在多台压测机同时执行同一命令，并分别设置：
+
+```bash
+--instanceId proxy-node-b --output target/benchmark-proxy-node-b.json
+--instanceId proxy-node-c --output target/benchmark-proxy-node-c.json
+```
+
+**6. 运行直连 NameServer 基线**
+
+为了评估 Proxy 额外开销，建议用相同参数再跑一轮直连基线：
+
+```bash
+./mq-proxy-example/bin/benchmark.sh \
+  --target direct \
+  --namesrvAddrs "namesrv1:9876;namesrv2:9876" \
+  --topic BenchmarkTopic \
+  --mode mixed \
+  --producerThreads 16 \
+  --consumerThreads 8 \
+  --messageSize 1024 \
+  --warmupSeconds 30 \
+  --durationSeconds 300 \
+  --reportIntervalSeconds 10 \
+  --instanceId direct-node-a \
+  --output target/benchmark-direct-node-a.json
+```
+
+**7. 汇总和判断**
+
+每个 JSON 文件都包含本节点的 `sendSuccessTps`、`consumeSuccessTps`、错误率和延迟分位。多节点结果可以按以下口径汇总：
+
+- 总发送 TPS：所有节点 `sendSuccessTps` 相加。
+- 总消费 TPS：所有节点 `consumeSuccessTps` 相加。
+- 错误率：用所有节点失败数除以总请求数。
+- 延迟分位：单节点 JSON 不能直接合并为全局 p99，正式报告应保留每个节点 p99，并取最差节点作为保守参考。
+
+上线前建议至少跑三组：
+
+- 小流量：`producerThreads=4`、`consumerThreads=2`、`durationSeconds=300`
+- 目标流量：按预期生产 TPS 设置线程数，`durationSeconds=1800`
+- 极限流量：逐步增加线程数，直到错误率升高或 p99 明显恶化
 
 ## 配置说明
 

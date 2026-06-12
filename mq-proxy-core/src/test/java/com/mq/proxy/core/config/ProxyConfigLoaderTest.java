@@ -39,4 +39,18 @@ public class ProxyConfigLoaderTest {
 
         assertEquals(96, config.getPullExecutorThreadNums());
     }
+
+    @Test
+    public void shouldLoadUpstreamClientLimitsFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("proxy.upstreamClientAsyncSemaphoreValue", "512");
+        props.setProperty("proxy.upstreamClientChannelPoolSize", "4");
+        props.setProperty("proxy.upstreamClientKeepAliveIntervalSeconds", "30");
+
+        ProxyConfig config = ProxyConfigLoader.loadFromProperties(props);
+
+        assertEquals(512, config.getUpstreamClientAsyncSemaphoreValue());
+        assertEquals(4, config.getUpstreamClientChannelPoolSize());
+        assertEquals(30, config.getUpstreamClientKeepAliveIntervalSeconds());
+    }
 }

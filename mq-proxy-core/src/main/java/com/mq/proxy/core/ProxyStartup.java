@@ -129,6 +129,9 @@ public class ProxyStartup {
             StorageConfig storageConfig = new StorageConfig();
             storageConfig.setNamesrvAddr(proxyConfig.getNamesrvAddr());
             storageConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
+            storageConfig.setUpstreamClientAsyncSemaphoreValue(proxyConfig.getUpstreamClientAsyncSemaphoreValue());
+            storageConfig.setUpstreamClientChannelPoolSize(proxyConfig.getUpstreamClientChannelPoolSize());
+            storageConfig.setUpstreamClientKeepAliveIntervalSeconds(proxyConfig.getUpstreamClientKeepAliveIntervalSeconds());
             adapter.initialize(storageConfig);
 
             return adapter;
@@ -177,6 +180,24 @@ public class ProxyStartup {
         if (proxyHost != null && !proxyHost.isEmpty()) {
             config.setProxyHost(proxyHost);
             log.info("Override proxyHost from system property: {}", proxyHost);
+        }
+        String upstreamClientAsyncSemaphoreValue = System.getProperty("proxy.upstreamClientAsyncSemaphoreValue");
+        if (upstreamClientAsyncSemaphoreValue != null && !upstreamClientAsyncSemaphoreValue.isEmpty()) {
+            config.setUpstreamClientAsyncSemaphoreValue(Integer.parseInt(upstreamClientAsyncSemaphoreValue));
+            log.info("Override upstreamClientAsyncSemaphoreValue from system property: {}",
+                    upstreamClientAsyncSemaphoreValue);
+        }
+        String upstreamClientChannelPoolSize = System.getProperty("proxy.upstreamClientChannelPoolSize");
+        if (upstreamClientChannelPoolSize != null && !upstreamClientChannelPoolSize.isEmpty()) {
+            config.setUpstreamClientChannelPoolSize(Integer.parseInt(upstreamClientChannelPoolSize));
+            log.info("Override upstreamClientChannelPoolSize from system property: {}", upstreamClientChannelPoolSize);
+        }
+        String upstreamClientKeepAliveIntervalSeconds =
+                System.getProperty("proxy.upstreamClientKeepAliveIntervalSeconds");
+        if (upstreamClientKeepAliveIntervalSeconds != null && !upstreamClientKeepAliveIntervalSeconds.isEmpty()) {
+            config.setUpstreamClientKeepAliveIntervalSeconds(Integer.parseInt(upstreamClientKeepAliveIntervalSeconds));
+            log.info("Override upstreamClientKeepAliveIntervalSeconds from system property: {}",
+                    upstreamClientKeepAliveIntervalSeconds);
         }
     }
 

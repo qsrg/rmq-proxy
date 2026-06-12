@@ -11,6 +11,7 @@ import com.mq.proxy.core.protocol.header.SendMessageRequestHeaderV2;
 import com.mq.proxy.core.protocol.header.UpdateConsumerOffsetRequestHeader;
 import com.mq.proxy.core.server.InvokeCallback;
 import com.mq.proxy.core.server.NettyClientConfig;
+import com.mq.proxy.core.server.NettyClientRuntime;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
@@ -22,6 +23,8 @@ import com.mq.proxy.core.storage.model.PutResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class RocketMQStorageAdapter implements StorageAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(RocketMQStorageAdapter.class);
@@ -30,6 +33,9 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     private static final long MIN_LONG_POLL_REQUEST_TIMEOUT_MILLIS = 30000L;
 
     private NettyRemotingClient remotingClient;
+    private NettyRemotingClient[] remotingClients;
+    private NettyClientRuntime remotingClientRuntime;
+    private final AtomicInteger remotingClientSelector = new AtomicInteger(0);
     private StorageConfig storageConfig;
     private volatile boolean initialized = false;
 
@@ -40,19 +46,45 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     @Override
     public void initialize(StorageConfig config) throws Exception {
         this.storageConfig = config;
+        int poolSize = Math.max(1, config.getUpstreamClientChannelPoolSize());
         NettyClientConfig clientConfig = new NettyClientConfig();
         clientConfig.setNamesrvAddr(config.getNamesrvAddr());
         clientConfig.setConnectTimeoutMillis(config.getConnectTimeoutMillis());
-        this.remotingClient = new NettyRemotingClient(clientConfig);
-        this.remotingClient.start();
+        clientConfig.setClientAsyncSemaphoreValue(Math.max(1,
+                (config.getUpstreamClientAsyncSemaphoreValue() + poolSize - 1) / poolSize));
+        clientConfig.setClientKeepAliveIntervalSeconds(config.getUpstreamClientKeepAliveIntervalSeconds());
+        clientConfig.setClientKeepAliveRequestCode(RequestCode.CHECK_CLIENT_CONFIG);
+
+        this.remotingClientRuntime = new NettyClientRuntime(clientConfig, "RocketMQStorageClient");
+        this.remotingClients = new NettyRemotingClient[poolSize];
+        for (int i = 0; i < poolSize; i++) {
+            this.remotingClients[i] = new NettyRemotingClient(clientConfig, this.remotingClientRuntime);
+            this.remotingClients[i].start();
+        }
+        this.remotingClient = this.remotingClients[0];
         this.initialized = true;
+        log.info("RocketMQStorageAdapter initialized: upstreamClientChannelPoolSize={}, upstreamClientAsyncSemaphoreValue={}, upstreamClientKeepAliveIntervalSeconds={}",
+                poolSize, config.getUpstreamClientAsyncSemaphoreValue(),
+                config.getUpstreamClientKeepAliveIntervalSeconds());
     }
 
     @Override
     public void shutdown() {
-        if (this.remotingClient != null) {
+        if (this.remotingClients != null) {
+            for (NettyRemotingClient client : this.remotingClients) {
+                if (client != null) {
+                    client.shutdown();
+                }
+            }
+            this.remotingClients = null;
+        } else if (this.remotingClient != null) {
             this.remotingClient.shutdown();
         }
+        if (this.remotingClientRuntime != null) {
+            this.remotingClientRuntime.shutdown();
+            this.remotingClientRuntime = null;
+        }
+        this.remotingClient = null;
         this.initialized = false;
     }
 
@@ -80,7 +112,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             String msgId = response.getExtFields() != null ? response.getExtFields().get("msgId") : null;
@@ -102,10 +134,10 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
         long timeoutMillis = computePullRequestTimeoutMillis(suspendTimeoutMillis);
-        log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
+        log.debug("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
                 targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, requestContext.finalSysFlag,
                 commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription, requestContext.expressionType, subVersion);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, requestContext.request, timeoutMillis);
+        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, requestContext.request, timeoutMillis);
         return processPullResponse(targetAddr, consumerGroup, topic, queueId, queueOffset, response);
     }
 
@@ -121,12 +153,12 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         final String targetAddr = resolveBrokerAddr(brokerAddr);
         final long timeoutMillis = computePullRequestTimeoutMillis(suspendTimeoutMillis);
 
-        log.info("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
+        log.debug("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
                 targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, requestContext.finalSysFlag,
                 commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription,
                 requestContext.expressionType, subVersion);
 
-        this.remotingClient.invokeAsync(targetAddr, requestContext.request, timeoutMillis, new InvokeCallback() {
+        selectRemotingClient().invokeAsync(targetAddr, requestContext.request, timeoutMillis, new InvokeCallback() {
             @Override
             public void operationSucceed(RemotingCommand response) {
                 try {
@@ -155,7 +187,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             long offset = response.getExtFields() != null && response.getExtFields().get("offset") != null
@@ -179,7 +211,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = this.remotingClient.invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
             throw new RuntimeException("updateConsumerOffset failed, code: " + response.getCode() + ", remark: " + response.getRemark());
@@ -202,7 +234,15 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         forwardRequest.setFlag(request.getFlag());
         forwardRequest.setRemark(request.getRemark());
 
-        return this.remotingClient.invokeSync(targetAddr, forwardRequest, 3000);
+        return selectRemotingClient().invokeSync(targetAddr, forwardRequest, 3000);
+    }
+
+    private NettyRemotingClient selectRemotingClient() {
+        if (this.remotingClients != null && this.remotingClients.length > 0) {
+            int index = Math.floorMod(this.remotingClientSelector.getAndIncrement(), this.remotingClients.length);
+            return this.remotingClients[index];
+        }
+        return this.remotingClient;
     }
 
     private String resolveBrokerAddr(String brokerAddr) {
@@ -253,7 +293,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
 
     private PullResult processPullResponse(String targetAddr, String consumerGroup, String topic, int queueId,
                                            long queueOffset, RemotingCommand response) {
-        log.info("pullMessage response from broker: targetAddr={}, code={}, remark={}, opaque={}, extFields={}, bodySize={}, serializeType={}",
+        log.debug("pullMessage response from broker: targetAddr={}, code={}, remark={}, opaque={}, extFields={}, bodySize={}, serializeType={}",
                 targetAddr, response.getCode(), response.getRemark(), response.getOpaque(), response.getExtFields(),
                 response.getBody() != null ? response.getBody().length : 0,
                 response.getSerializeTypeCurrentRPC());

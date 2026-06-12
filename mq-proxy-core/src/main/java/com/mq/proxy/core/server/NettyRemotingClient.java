@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -54,6 +55,7 @@ public class NettyRemotingClient {
     private final ConcurrentHashMap<Integer, ResponseFuture> responseTable = new ConcurrentHashMap<>();
     private final AtomicInteger opaqueCounter = new AtomicInteger(0);
     private final AtomicInteger addressSelector = new AtomicInteger(0);
+    private final Semaphore semaphoreAsync;
     private ExecutorService callbackExecutor;
     private ScheduledExecutorService responseTableScanExecutor;
     private NettyClientRuntime.ResponseTableScanRegistration responseTableScanRegistration;
@@ -72,6 +74,7 @@ public class NettyRemotingClient {
         this.nettyClientConfig = nettyClientConfig;
         this.nettyClientRuntime = nettyClientRuntime;
         this.ownsRuntime = ownsRuntime;
+        this.semaphoreAsync = new Semaphore(Math.max(1, nettyClientConfig.getClientAsyncSemaphoreValue()));
         if (nettyClientConfig.isTlsEnabled()) {
             try {
                 this.sslContext = buildSslContext();
@@ -145,6 +148,7 @@ public class NettyRemotingClient {
         this.bootstrap.group(this.eventLoopGroup)
                 .channel(NioSocketChannel.class)
                 .option(ChannelOption.TCP_NODELAY, true)
+                .option(ChannelOption.SO_KEEPALIVE, true)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, this.nettyClientConfig.getConnectTimeoutMillis())
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
@@ -153,8 +157,11 @@ public class NettyRemotingClient {
                             SSLEngine sslEngine = sslContext.newEngine(ch.alloc());
                             ch.pipeline().addLast("ssl", new SslHandler(sslEngine));
                         }
+                        int writerIdleSeconds = nettyClientConfig.isClientKeepAliveEnabled()
+                                ? nettyClientConfig.getClientKeepAliveIntervalSeconds() : 0;
                         ch.pipeline().addLast("idleStateHandler",
-                                new IdleStateHandler(0, 0, nettyClientConfig.getClientChannelMaxIdleTimeSeconds()));
+                                new IdleStateHandler(0, writerIdleSeconds,
+                                        nettyClientConfig.getClientChannelMaxIdleTimeSeconds()));
                         ch.pipeline().addLast(new RemotingCommandDecoder());
                         ch.pipeline().addLast(new RemotingCommandEncoder());
                         ch.pipeline().addLast(new NettyClientHandler());
@@ -172,6 +179,7 @@ public class NettyRemotingClient {
         }
         this.channelTable.clear();
         for (ResponseFuture responseFuture : this.responseTable.values()) {
+            releaseAsyncSemaphore(responseFuture);
             if (responseFuture.fail(new RuntimeException("client shutdown"))) {
                 executeInvokeCallback(responseFuture);
             }
@@ -300,7 +308,7 @@ public class NettyRemotingClient {
             }
             throw e;
         } finally {
-            this.responseTable.remove(request.getOpaque());
+            removeResponseFuture(request.getOpaque(), responseFuture);
         }
     }
 
@@ -310,7 +318,10 @@ public class NettyRemotingClient {
             throw new IllegalArgumentException("addr is blank");
         }
         if (targetAddrs.size() == 1) {
-            invokeAsyncSingle(targetAddrs.get(0), request, timeoutMillis, invokeCallback);
+            if (!tryAcquireAsyncSemaphore(targetAddrs.get(0), invokeCallback)) {
+                return;
+            }
+            invokeAsyncSingleWithPermit(targetAddrs.get(0), request, timeoutMillis, invokeCallback);
             return;
         }
 
@@ -318,8 +329,11 @@ public class NettyRemotingClient {
         int startIndex = Math.floorMod(this.addressSelector.getAndIncrement(), targetAddrs.size());
         for (int i = 0; i < targetAddrs.size(); i++) {
             String targetAddr = targetAddrs.get((startIndex + i) % targetAddrs.size());
+            if (!tryAcquireAsyncSemaphore(targetAddr, invokeCallback)) {
+                return;
+            }
             try {
-                invokeAsyncSingle(targetAddr, request, timeoutMillis, invokeCallback);
+                invokeAsyncSingleWithPermit(targetAddr, request, timeoutMillis, invokeCallback);
                 return;
             } catch (Exception e) {
                 lastException = e;
@@ -334,39 +348,59 @@ public class NettyRemotingClient {
 
     protected void invokeAsyncSingle(String addr, RemotingCommand request, long timeoutMillis,
                                      InvokeCallback invokeCallback) throws Exception {
-        Channel channel = getAndCreateChannel(addr);
-        if (channel == null || !channel.isActive()) {
-            closeChannel(addr, channel, "inactive-before-async");
-            throw new RuntimeException("channel is not active, addr: " + addr);
+        if (!tryAcquireAsyncSemaphore(addr, invokeCallback)) {
+            return;
         }
+        invokeAsyncSingleWithPermit(addr, request, timeoutMillis, invokeCallback);
+    }
 
-        request.setOpaque(this.opaqueCounter.getAndIncrement());
-        final ResponseFuture responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis, addr, invokeCallback);
-        this.responseTable.put(request.getOpaque(), responseFuture);
+    private void invokeAsyncSingleWithPermit(String addr, RemotingCommand request, long timeoutMillis,
+                                             InvokeCallback invokeCallback) throws Exception {
+        Channel channel = null;
+        ResponseFuture responseFuture = null;
+        boolean responseRegistered = false;
         try {
+            channel = getAndCreateChannel(addr);
+            if (channel == null || !channel.isActive()) {
+                closeChannel(addr, channel, "inactive-before-async");
+                throw new RuntimeException("channel is not active, addr: " + addr);
+            }
+
+            request.setOpaque(this.opaqueCounter.getAndIncrement());
+            responseFuture = new ResponseFuture(request.getOpaque(), channel, timeoutMillis, addr, invokeCallback);
+            this.responseTable.put(request.getOpaque(), responseFuture);
+            responseRegistered = true;
             ChannelFuture writeFuture = channel.writeAndFlush(request);
             if (writeFuture != null) {
+                final Channel finalChannel = channel;
+                final ResponseFuture finalResponseFuture = responseFuture;
                 writeFuture.addListener(new ChannelFutureListener() {
                     @Override
                     public void operationComplete(ChannelFuture future) {
                         if (future.isSuccess()) {
-                            responseFuture.setSendRequestOK(true);
+                            finalResponseFuture.setSendRequestOK(true);
                             return;
                         }
-                        responseFuture.setSendRequestOK(false);
-                        responseFuture.setCause(future.cause());
-                        if (responseTable.remove(request.getOpaque(), responseFuture) && responseFuture.fail(
+                        finalResponseFuture.setSendRequestOK(false);
+                        finalResponseFuture.setCause(future.cause());
+                        if (removeResponseFuture(request.getOpaque(), finalResponseFuture) && finalResponseFuture.fail(
                                 new RuntimeException("send request failed, addr: " + addr, future.cause()))) {
-                            executeInvokeCallback(responseFuture);
+                            executeInvokeCallback(finalResponseFuture);
                         }
-                        closeChannel(addr, channel, "send-failed");
+                        closeChannel(addr, finalChannel, "send-failed");
                     }
                 });
             }
         } catch (Exception e) {
-            this.responseTable.remove(request.getOpaque(), responseFuture);
-            responseFuture.fail(e);
-            executeInvokeCallback(responseFuture);
+            if (responseRegistered) {
+                removeResponseFuture(request.getOpaque(), responseFuture);
+            } else {
+                semaphoreAsync.release();
+            }
+            if (responseFuture != null) {
+                responseFuture.fail(e);
+                executeInvokeCallback(responseFuture);
+            }
             if (!(e instanceof RuntimeException && e.getMessage() != null
                     && e.getMessage().startsWith("send request failed"))) {
                 closeChannel(addr, channel, "async-failed");
@@ -471,7 +505,7 @@ public class NettyRemotingClient {
         protected void channelRead0(ChannelHandlerContext ctx, RemotingCommand msg) throws Exception {
             if (msg.isResponseType()) {
                 ResponseFuture responseFuture = responseTable.get(msg.getOpaque());
-                if (responseFuture != null && responseTable.remove(msg.getOpaque(), responseFuture)) {
+                if (responseFuture != null && removeResponseFuture(msg.getOpaque(), responseFuture)) {
                     if (responseFuture.putResponse(msg)) {
                         executeInvokeCallback(responseFuture);
                     }
@@ -517,6 +551,15 @@ public class NettyRemotingClient {
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
             if (evt instanceof IdleStateEvent) {
                 IdleStateEvent event = (IdleStateEvent) evt;
+                if (event.state() == IdleState.WRITER_IDLE && nettyClientConfig.isClientKeepAliveEnabled()) {
+                    RemotingCommand keepAlive = RemotingCommand.createRequestCommand(
+                            nettyClientConfig.getClientKeepAliveRequestCode(), null);
+                    keepAlive.markOnewayRPC();
+                    ctx.writeAndFlush(keepAlive);
+                    log.debug("NettyRemotingClient keepalive sent: requestCode={}, channel={}",
+                            nettyClientConfig.getClientKeepAliveRequestCode(), ctx.channel());
+                    return;
+                }
                 if (event.state() == IdleState.ALL_IDLE) {
                     removeChannel(ctx.channel(), "idle");
                     ctx.close();
@@ -540,7 +583,7 @@ public class NettyRemotingClient {
             if (!responseFuture.isTimeout()) {
                 continue;
             }
-            if (!this.responseTable.remove(entry.getKey(), responseFuture)) {
+            if (!removeResponseFuture(entry.getKey(), responseFuture)) {
                 continue;
             }
             if (responseFuture.isAsync()) {
@@ -560,13 +603,38 @@ public class NettyRemotingClient {
             if (responseFuture.getProcessChannel() != channel) {
                 continue;
             }
-            if (!this.responseTable.remove(entry.getKey(), responseFuture)) {
+            if (!removeResponseFuture(entry.getKey(), responseFuture)) {
                 continue;
             }
             if (responseFuture.fail(new RuntimeException("channel closed while waiting for response, addr: "
                     + addr + ", reason: " + reason))) {
                 executeInvokeCallback(responseFuture);
             }
+        }
+    }
+
+    private boolean tryAcquireAsyncSemaphore(String addr, InvokeCallback invokeCallback) {
+        if (this.semaphoreAsync.tryAcquire()) {
+            return true;
+        }
+        ResponseFuture responseFuture = new ResponseFuture(-1, null, 0, addr, invokeCallback);
+        responseFuture.fail(new RuntimeException("too many async requests, addr: " + addr
+                + ", limit: " + this.nettyClientConfig.getClientAsyncSemaphoreValue()));
+        executeInvokeCallback(responseFuture);
+        return false;
+    }
+
+    private boolean removeResponseFuture(Integer opaque, ResponseFuture responseFuture) {
+        boolean removed = this.responseTable.remove(opaque, responseFuture);
+        if (removed) {
+            releaseAsyncSemaphore(responseFuture);
+        }
+        return removed;
+    }
+
+    private void releaseAsyncSemaphore(ResponseFuture responseFuture) {
+        if (responseFuture != null && responseFuture.isAsync()) {
+            this.semaphoreAsync.release();
         }
     }
 

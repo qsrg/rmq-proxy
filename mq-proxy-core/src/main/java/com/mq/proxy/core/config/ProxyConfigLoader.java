@@ -45,6 +45,18 @@ public class ProxyConfigLoader {
         if (props.containsKey("proxy.routeCacheExpireMillis")) {
             config.setRouteCacheExpireMillis(parseLong("proxy.routeCacheExpireMillis", props.getProperty("proxy.routeCacheExpireMillis")));
         }
+        if (props.containsKey("proxy.upstreamClientAsyncSemaphoreValue")) {
+            config.setUpstreamClientAsyncSemaphoreValue(parseInt("proxy.upstreamClientAsyncSemaphoreValue",
+                    props.getProperty("proxy.upstreamClientAsyncSemaphoreValue")));
+        }
+        if (props.containsKey("proxy.upstreamClientChannelPoolSize")) {
+            config.setUpstreamClientChannelPoolSize(parseInt("proxy.upstreamClientChannelPoolSize",
+                    props.getProperty("proxy.upstreamClientChannelPoolSize")));
+        }
+        if (props.containsKey("proxy.upstreamClientKeepAliveIntervalSeconds")) {
+            config.setUpstreamClientKeepAliveIntervalSeconds(parseInt("proxy.upstreamClientKeepAliveIntervalSeconds",
+                    props.getProperty("proxy.upstreamClientKeepAliveIntervalSeconds")));
+        }
 
         if (props.containsKey("proxy.tlsEnabled")) {
             config.setTlsEnabled(Boolean.parseBoolean(props.getProperty("proxy.tlsEnabled")));

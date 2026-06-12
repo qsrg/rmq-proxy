@@ -42,7 +42,7 @@ public class RocketMQProducerQuickStart {
 
             // Step 4: 发送消息
             System.out.println("【步骤2】发送测试消息...");
-            String topic = "QuickStartTopic4";
+            String topic = "QuickStartTopic9";
             String tags = "TagA";
             String keys = "OrderID_123";
 
