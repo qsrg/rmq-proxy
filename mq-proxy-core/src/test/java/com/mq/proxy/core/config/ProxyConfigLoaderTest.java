@@ -41,6 +41,16 @@ public class ProxyConfigLoaderTest {
     }
 
     @Test
+    public void shouldLoadRequestProcessorThreadNumsFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("proxy.requestProcessorThreadNums", "64");
+
+        ProxyConfig config = ProxyConfigLoader.loadFromProperties(props);
+
+        assertEquals(64, config.getRequestProcessorThreadNums());
+    }
+
+    @Test
     public void shouldLoadUpstreamClientLimitsFromProperties() {
         Properties props = new Properties();
         props.setProperty("proxy.upstreamClientAsyncSemaphoreValue", "512");

@@ -38,6 +38,10 @@ public class ProxyConfigLoader {
         if (props.containsKey("proxy.workerThreadNums")) {
             config.setWorkerThreadNums(parseInt("proxy.workerThreadNums", props.getProperty("proxy.workerThreadNums")));
         }
+        if (props.containsKey("proxy.requestProcessorThreadNums")) {
+            config.setRequestProcessorThreadNums(parseInt("proxy.requestProcessorThreadNums",
+                    props.getProperty("proxy.requestProcessorThreadNums")));
+        }
         if (props.containsKey("proxy.pullExecutorThreadNums")) {
             config.setPullExecutorThreadNums(parseInt("proxy.pullExecutorThreadNums",
                     props.getProperty("proxy.pullExecutorThreadNums")));

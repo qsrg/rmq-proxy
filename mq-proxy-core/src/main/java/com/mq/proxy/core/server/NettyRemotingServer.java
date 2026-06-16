@@ -131,8 +131,10 @@ public class NettyRemotingServer {
                     }
                 });
         this.defaultExecutor = createRequestExecutor(
-                Runtime.getRuntime().availableProcessors() * 2,
+                this.nettyServerConfig.getRequestProcessorThreadNums(),
                 "ProxyRequestProcessor_");
+        log.info("Proxy request processor executor initialized: threadNums={}",
+                this.nettyServerConfig.getRequestProcessorThreadNums());
         this.channelScanExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
             private final AtomicInteger threadIndex = new AtomicInteger(0);
             @Override

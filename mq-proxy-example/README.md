@@ -303,10 +303,19 @@ proxy.listenPort=10913
 proxy.host=测试环境Proxy机器IP
 proxy.namesrvAddr=namesrv1:9876;namesrv2:9876
 proxy.workerThreadNums=8
+proxy.requestProcessorThreadNums=16
 proxy.pullExecutorThreadNums=32
 proxy.upstreamClientAsyncSemaphoreValue=4096
 proxy.upstreamClientChannelPoolSize=4
 proxy.upstreamClientKeepAliveIntervalSeconds=30
+```
+
+`proxy.requestProcessorThreadNums` 控制普通请求处理线程数，`SEND_MESSAGE` 会占用这个线程同步等待 broker 返回。同步刷盘、同步复制场景下，如果提高压测端 `producerThreads` 后 TPS 不再上涨，可以按 `16 -> 32 -> 64 -> 128` 调大该值验证 proxy 是否卡在请求处理线程池。
+
+也可以不改配置文件，启动时临时覆盖：
+
+```bash
+JAVA_OPT="-Dproxy.requestProcessorThreadNums=64" sh bin/proxy.sh start
 ```
 
 启动并检查日志：

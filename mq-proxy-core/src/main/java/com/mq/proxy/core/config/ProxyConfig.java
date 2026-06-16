@@ -7,6 +7,7 @@ public class ProxyConfig {
     private int connectTimeoutMillis = 3000;
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
+    private int requestProcessorThreadNums = Runtime.getRuntime().availableProcessors() * 2;
     private int pullExecutorThreadNums = Math.max(32, Runtime.getRuntime().availableProcessors() * 4);
     private long routeCacheExpireMillis = 30000;
     private int upstreamClientAsyncSemaphoreValue = 4096;
@@ -65,6 +66,14 @@ public class ProxyConfig {
 
     public void setWorkerThreadNums(int workerThreadNums) {
         this.workerThreadNums = workerThreadNums;
+    }
+
+    public int getRequestProcessorThreadNums() {
+        return requestProcessorThreadNums;
+    }
+
+    public void setRequestProcessorThreadNums(int requestProcessorThreadNums) {
+        this.requestProcessorThreadNums = requestProcessorThreadNums;
     }
 
     public int getPullExecutorThreadNums() {

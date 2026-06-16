@@ -77,6 +77,7 @@ public class ProxyStartup {
         nettyServerConfig.setListenPort(proxyConfig.getListenPort());
         nettyServerConfig.setBossThreadNums(proxyConfig.getBossThreadNums());
         nettyServerConfig.setWorkerThreadNums(proxyConfig.getWorkerThreadNums());
+        nettyServerConfig.setRequestProcessorThreadNums(proxyConfig.getRequestProcessorThreadNums());
         nettyServerConfig.setPullExecutorThreadNums(proxyConfig.getPullExecutorThreadNums());
 
         if (proxyConfig.isTlsEnabled()) {
@@ -180,6 +181,11 @@ public class ProxyStartup {
         if (proxyHost != null && !proxyHost.isEmpty()) {
             config.setProxyHost(proxyHost);
             log.info("Override proxyHost from system property: {}", proxyHost);
+        }
+        String requestProcessorThreadNums = System.getProperty("proxy.requestProcessorThreadNums");
+        if (requestProcessorThreadNums != null && !requestProcessorThreadNums.isEmpty()) {
+            config.setRequestProcessorThreadNums(Integer.parseInt(requestProcessorThreadNums));
+            log.info("Override requestProcessorThreadNums from system property: {}", requestProcessorThreadNums);
         }
         String upstreamClientAsyncSemaphoreValue = System.getProperty("proxy.upstreamClientAsyncSemaphoreValue");
         if (upstreamClientAsyncSemaphoreValue != null && !upstreamClientAsyncSemaphoreValue.isEmpty()) {

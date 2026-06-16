@@ -4,6 +4,7 @@ public class NettyServerConfig {
     private int listenPort = 19876;
     private int bossThreadNums = 1;
     private int workerThreadNums = Runtime.getRuntime().availableProcessors();
+    private int requestProcessorThreadNums = Runtime.getRuntime().availableProcessors() * 2;
     private int pullExecutorThreadNums = Math.max(32, Runtime.getRuntime().availableProcessors() * 4);
     private int callbackExecutorThreadNums = 4;
     private int serverOnewaySemaphoreValue = 256;
@@ -40,6 +41,14 @@ public class NettyServerConfig {
 
     public void setWorkerThreadNums(int workerThreadNums) {
         this.workerThreadNums = workerThreadNums;
+    }
+
+    public int getRequestProcessorThreadNums() {
+        return requestProcessorThreadNums;
+    }
+
+    public void setRequestProcessorThreadNums(int requestProcessorThreadNums) {
+        this.requestProcessorThreadNums = requestProcessorThreadNums;
     }
 
     public int getCallbackExecutorThreadNums() {
