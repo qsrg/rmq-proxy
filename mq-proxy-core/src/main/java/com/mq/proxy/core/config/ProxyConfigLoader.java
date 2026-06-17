@@ -1,5 +1,7 @@
 package com.mq.proxy.core.config;
 
+import com.mq.proxy.core.server.TlsMode;
+
 import java.io.FileInputStream;
 import java.util.Properties;
 
@@ -62,20 +64,44 @@ public class ProxyConfigLoader {
                     props.getProperty("proxy.upstreamClientKeepAliveIntervalSeconds")));
         }
 
-        if (props.containsKey("proxy.tlsEnabled")) {
-            config.setTlsEnabled(Boolean.parseBoolean(props.getProperty("proxy.tlsEnabled")));
+        String downstreamTlsEnabled = getProperty(props, "proxy.downstream.tls.enabled", "proxy.tlsEnabled");
+        if (downstreamTlsEnabled != null) {
+            config.setTlsEnabled(Boolean.parseBoolean(downstreamTlsEnabled));
         }
-        if (props.containsKey("proxy.tlsCertPath")) {
-            config.setTlsCertPath(props.getProperty("proxy.tlsCertPath"));
+        String downstreamTlsCertPath = getProperty(props, "proxy.downstream.tls.certPath", "proxy.tlsCertPath");
+        if (downstreamTlsCertPath != null) {
+            config.setTlsCertPath(downstreamTlsCertPath);
         }
-        if (props.containsKey("proxy.tlsKeyPath")) {
-            config.setTlsKeyPath(props.getProperty("proxy.tlsKeyPath"));
+        String downstreamTlsKeyPath = getProperty(props, "proxy.downstream.tls.keyPath", "proxy.tlsKeyPath");
+        if (downstreamTlsKeyPath != null) {
+            config.setTlsKeyPath(downstreamTlsKeyPath);
         }
-        if (props.containsKey("proxy.tlsTrustCertPath")) {
-            config.setTlsTrustCertPath(props.getProperty("proxy.tlsTrustCertPath"));
+        String downstreamTlsTrustCertPath = getProperty(props, "proxy.downstream.tls.trustCertPath", "proxy.tlsTrustCertPath");
+        if (downstreamTlsTrustCertPath != null) {
+            config.setTlsTrustCertPath(downstreamTlsTrustCertPath);
         }
-        if (props.containsKey("proxy.tlsClientAuth")) {
-            config.setTlsClientAuth(Boolean.parseBoolean(props.getProperty("proxy.tlsClientAuth")));
+        String downstreamTlsClientAuth = getProperty(props, "proxy.downstream.tls.clientAuth", "proxy.tlsClientAuth");
+        if (downstreamTlsClientAuth != null) {
+            config.setTlsClientAuth(Boolean.parseBoolean(downstreamTlsClientAuth));
+        }
+        String downstreamTlsMode = getProperty(props, "proxy.downstream.tls.mode", "proxy.tlsMode");
+        if (downstreamTlsMode != null) {
+            config.setTlsMode(TlsMode.parse(downstreamTlsMode));
+        }
+
+        String upstreamBrokerTlsEnabled = getProperty(props, "proxy.upstream.broker.tls.enabled", "proxy.upstreamTlsEnabled");
+        if (upstreamBrokerTlsEnabled != null) {
+            config.setUpstreamTlsEnabled(Boolean.parseBoolean(upstreamBrokerTlsEnabled));
+        }
+        String upstreamBrokerTlsClientCertPath = getProperty(props,
+                "proxy.upstream.broker.tls.clientCertPath", "proxy.upstreamTlsClientCertPath");
+        if (upstreamBrokerTlsClientCertPath != null) {
+            config.setUpstreamTlsClientCertPath(upstreamBrokerTlsClientCertPath);
+        }
+        String upstreamBrokerTlsClientKeyPath = getProperty(props,
+                "proxy.upstream.broker.tls.clientKeyPath", "proxy.upstreamTlsClientKeyPath");
+        if (upstreamBrokerTlsClientKeyPath != null) {
+            config.setUpstreamTlsClientKeyPath(upstreamBrokerTlsClientKeyPath);
         }
 
         return config;
@@ -95,6 +121,16 @@ public class ProxyConfigLoader {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Invalid long value for config '" + key + "': " + value, e);
         }
+    }
+
+    private static String getProperty(Properties props, String canonicalKey, String legacyKey) {
+        if (props.containsKey(canonicalKey)) {
+            return props.getProperty(canonicalKey);
+        }
+        if (legacyKey != null && props.containsKey(legacyKey)) {
+            return props.getProperty(legacyKey);
+        }
+        return null;
     }
 
     public static ProxyConfig loadDefault() {

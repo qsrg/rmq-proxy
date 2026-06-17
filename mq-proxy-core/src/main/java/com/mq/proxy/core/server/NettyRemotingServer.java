@@ -18,16 +18,13 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.ClientAuth;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLEngine;
 import java.io.FileInputStream;
 import java.io.InputStream;
 
@@ -50,10 +47,10 @@ public class NettyRemotingServer {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
-    private final ConcurrentHashMap<Integer, ProcessorRegistration> processorTable = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, ProcessorRegistration> processorTable;
     private RemotingProcessor defaultRemotingProcessor = new DefaultRemotingProcessor();
-    private final AtomicInteger opaqueCounter = new AtomicInteger(0);
-    private final ConcurrentHashMap<Integer, ResponseFuture> responseTable = new ConcurrentHashMap<>();
+    private final AtomicInteger opaqueCounter;
+    private final ConcurrentHashMap<Integer, ResponseFuture> responseTable;
     private ExecutorService callbackExecutor;
     private ScheduledExecutorService channelScanExecutor;
 
@@ -63,14 +60,28 @@ public class NettyRemotingServer {
     private final ExecutorService pullExecutor;
 
     public NettyRemotingServer(NettyServerConfig nettyServerConfig) {
+        this(nettyServerConfig, null);
+    }
+
+    public NettyRemotingServer(NettyServerConfig nettyServerConfig, NettyRemotingServer sharedStateServer) {
         this.nettyServerConfig = nettyServerConfig;
-        this.pullExecutor = createRequestExecutor(
-                this.nettyServerConfig.getPullExecutorThreadNums(),
-                "ProxyPullRequestProcessor_");
+        if (sharedStateServer != null) {
+            this.processorTable = sharedStateServer.processorTable;
+            this.opaqueCounter = sharedStateServer.opaqueCounter;
+            this.responseTable = sharedStateServer.responseTable;
+            this.pullExecutor = sharedStateServer.pullExecutor;
+        } else {
+            this.processorTable = new ConcurrentHashMap<>();
+            this.opaqueCounter = new AtomicInteger(0);
+            this.responseTable = new ConcurrentHashMap<>();
+            this.pullExecutor = createRequestExecutor(
+                    this.nettyServerConfig.getPullExecutorThreadNums(),
+                    "ProxyPullRequestProcessor_");
+        }
         if (nettyServerConfig.isTlsEnabled()) {
             try {
                 this.sslContext = buildSslContext();
-                log.info("TLS enabled, SSL context initialized");
+                log.info("TLS enabled, SSL context initialized, tlsMode={}", nettyServerConfig.getTlsMode());
             } catch (Exception e) {
                 throw new RuntimeException("Failed to initialize TLS SSL context", e);
             }
@@ -154,9 +165,13 @@ public class NettyRemotingServer {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) throws Exception {
+                        // 动态 TLS 检测：当 sslContext != null 时，使用 HandshakeHandler 根据客户端
+                        // 第一个字节决定是否启用 TLS，同一端口同时支持 TLS 和非 TLS 客户端（PERMISSIVE 模式）。
+                        // 这与 RocketMQ 原生服务器的 TLS 协商机制完全兼容。
                         if (sslContext != null) {
-                            SSLEngine sslEngine = sslContext.newEngine(ch.alloc());
-                            ch.pipeline().addLast("ssl", new SslHandler(sslEngine));
+                            TlsMode mode = nettyServerConfig.getTlsMode();
+                            ch.pipeline().addLast("handshakeHandler",
+                                    new HandshakeHandler(mode, sslContext));
                         }
                         ch.pipeline().addLast("frameDecoder",
                                 new LengthFieldBasedFrameDecoder(16777216, 0, 4, 0, 0));

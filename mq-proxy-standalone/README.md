@@ -28,7 +28,7 @@ cd mq-proxy-1.0.0-SNAPSHOT
 编辑 `conf/proxy.properties`，至少修改以下配置：
 
 ```properties
-proxy.listenPort=10913
+proxy.listenPort=19876
 proxy.namesrvAddr=127.0.0.1:9876
 ```
 
@@ -45,12 +45,12 @@ bash bin/proxy.sh
 ```java
 // 生产者
 DefaultMQProducer producer = new DefaultMQProducer("producer_group");
-producer.setNamesrvAddr("127.0.0.1:10913");
+producer.setNamesrvAddr("127.0.0.1:19876");
 producer.start();
 
 // 消费者
 DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("consumer_group");
-consumer.setNamesrvAddr("127.0.0.1:10913");
+consumer.setNamesrvAddr("127.0.0.1:19876");
 consumer.subscribe("TopicTest", "*");
 consumer.start();
 ```
@@ -76,11 +76,22 @@ mq-proxy/
 
 ## 配置详解
 
+### 配置文件加载顺序
+
+Proxy 启动时按以下顺序读取配置：
+
+1. 启动参数 `-c /path/to/proxy.properties`
+2. JVM 参数 `-Dproxy.config.file=/path/to/proxy.properties`
+3. classpath 下的 `proxy.properties`
+4. 代码默认值
+
+Standalone 分发包默认使用 `conf/proxy.properties`，启动脚本会通过 `-c` 传给 Proxy。旧配置项仍兼容读取，但新配置和文档统一使用下面的 canonical key。
+
 ### 网络连接
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `proxy.listenPort` | 10911 | Proxy 对外监听端口，客户端连接此端口 |
+| `proxy.listenPort` | 19876 | Proxy 对外监听端口，客户端连接此端口 |
 | `proxy.host` | 127.0.0.1 | Proxy 自身 IP，用于路由信息中告知客户端回连地址 |
 | `proxy.namesrvAddr` | 127.0.0.1:9876 | NameServer 地址，多个用分号分隔，必填 |
 | `proxy.connectTimeoutMillis` | 3000 | Proxy 连接 Broker 的超时时间（毫秒） |
@@ -105,19 +116,41 @@ proxy.namesrvAddr=10.0.0.1:9876;10.0.0.2:9876
 |--------|--------|------|
 | `proxy.bossThreadNums` | 1 | Boss 线程数，负责接受新连接 |
 | `proxy.workerThreadNums` | CPU 核心数 | Worker 线程数，处理 I/O 事件 |
+| `proxy.requestProcessorThreadNums` | CPU 核心数 x 2 | 普通请求处理线程数 |
 | `proxy.pullExecutorThreadNums` | 32 | Pull 长轮询专用线程数，建议按并发拉取数单独调大 |
 
-### TLS 配置
+### 上游 Broker 客户端连接池
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `proxy.tlsEnabled` | false | 是否启用 TLS，启用后客户端必须通过 TLS 连接 Proxy |
-| `proxy.tlsCertPath` | 空 | 服务端证书文件路径（PEM 格式，如 `/etc/mq-proxy/server.crt`），启用 TLS 时必填 |
-| `proxy.tlsKeyPath` | 空 | 服务端私钥文件路径（PEM 格式，如 `/etc/mq-proxy/server.key`），启用 TLS 时必填 |
-| `proxy.tlsTrustCertPath` | 空 | 受信 CA 证书文件路径（PEM 格式），双向认证时必填，用于验证客户端证书 |
-| `proxy.tlsClientAuth` | false | 是否要求客户端提供证书；`true` 表示启用双向认证（mTLS），需配合 `tlsTrustCertPath` 使用 |
+| `proxy.upstreamClientAsyncSemaphoreValue` | 4096 | Proxy 转发到 Broker 的异步请求总并发上限 |
+| `proxy.upstreamClientChannelPoolSize` | 4 | Proxy 到 Broker 的 Netty 客户端连接池大小 |
+| `proxy.upstreamClientKeepAliveIntervalSeconds` | 30 | Proxy 到 Broker 连接的 keepalive 请求间隔，0 表示关闭 |
+
+### 下游 TLS：Client -> Proxy
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `proxy.downstream.tls.enabled` | false | 是否启用 Proxy 监听端口的 TLS 能力。启用后需配置服务端证书和私钥 |
+| `proxy.downstream.tls.mode` | permissive | 下游 TLS 接入模式：`disabled` 只支持明文；`permissive` 同端口同时支持 TLS 和明文；`enforcing` 只允许 TLS |
+| `proxy.downstream.tls.certPath` | 空 | Proxy 服务端证书文件路径（PEM 格式，如 `/etc/mq-proxy/proxy-server.crt`），`enabled=true` 时必填 |
+| `proxy.downstream.tls.keyPath` | 空 | Proxy 服务端私钥文件路径（PEM 格式，如 `/etc/mq-proxy/proxy-server.key`），`enabled=true` 时必填 |
+| `proxy.downstream.tls.trustCertPath` | 空 | 受信客户端 CA/证书文件路径（PEM 格式），`clientAuth=true` 时用于验证客户端证书 |
+| `proxy.downstream.tls.clientAuth` | false | 是否要求客户端提供证书；`true` 表示启用双向认证（mTLS） |
 
 > **说明**：Proxy 使用 PEM 格式证书，与 RocketMQ Broker 的 TLS 配置方式一致。如果私钥文件使用了密码加密，可通过 JVM 参数 `-Dproxy.tlsKeyPassword=xxx` 传入解密密码，大多数情况下私钥未加密，无需配置。
+
+### 上游 Broker TLS：Proxy -> Broker
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `proxy.upstream.broker.tls.enabled` | false | Proxy 连接 Broker 时是否使用 TLS。Broker 配置为 `tlsMode=enforcing` 时必须设为 `true` |
+| `proxy.upstream.broker.tls.clientCertPath` | 空 | Proxy 作为客户端连接 Broker 时使用的客户端证书（PEM）。Broker 要求客户端证书时配置 |
+| `proxy.upstream.broker.tls.clientKeyPath` | 空 | Proxy 作为客户端连接 Broker 时使用的客户端私钥（PEM）。Broker 要求客户端证书时配置 |
+
+上游 Broker TLS 与下游 TLS 独立：可以只加密 Client -> Proxy，也可以只加密 Proxy -> Broker。当前上游 TLS 默认不验证 Broker 证书，行为与 RocketMQ 客户端默认 `tlsClientAuthServer=false` 一致。
+
+旧配置项 `proxy.tlsEnabled`、`proxy.tlsMode`、`proxy.tlsCertPath`、`proxy.tlsKeyPath`、`proxy.tlsTrustCertPath`、`proxy.tlsClientAuth`、`proxy.upstreamTlsEnabled`、`proxy.upstreamTlsClientCertPath`、`proxy.upstreamTlsClientKeyPath` 仍可读取，但不建议继续使用。
 
 ---
 
@@ -138,10 +171,11 @@ openssl req -x509 -newkey rsa:2048 -keyout server.key \
 #### 2. Proxy 配置（单向认证）
 
 ```properties
-proxy.tlsEnabled=true
-proxy.tlsCertPath=/path/to/server.crt
-proxy.tlsKeyPath=/path/to/server.key
-proxy.tlsClientAuth=false
+proxy.downstream.tls.enabled=true
+proxy.downstream.tls.mode=permissive
+proxy.downstream.tls.certPath=/path/to/server.crt
+proxy.downstream.tls.keyPath=/path/to/server.key
+proxy.downstream.tls.clientAuth=false
 ```
 
 #### 3. 客户端配置（单向认证）
@@ -174,11 +208,12 @@ cat client.crt > trusted-clients.crt
 #### 3. Proxy 配置（双向认证）
 
 ```properties
-proxy.tlsEnabled=true
-proxy.tlsCertPath=/path/to/server.crt
-proxy.tlsKeyPath=/path/to/server.key
-proxy.tlsTrustCertPath=/path/to/trusted-clients.crt
-proxy.tlsClientAuth=true
+proxy.downstream.tls.enabled=true
+proxy.downstream.tls.mode=enforcing
+proxy.downstream.tls.certPath=/path/to/server.crt
+proxy.downstream.tls.keyPath=/path/to/server.key
+proxy.downstream.tls.trustCertPath=/path/to/trusted-clients.crt
+proxy.downstream.tls.clientAuth=true
 ```
 
 #### 4. 客户端配置（双向认证）
@@ -215,11 +250,12 @@ openssl x509 -req \
 #### 3. Proxy 配置
 
 ```properties
-proxy.tlsEnabled=true
-proxy.tlsCertPath=/path/to/server.crt
-proxy.tlsKeyPath=/path/to/server.key
-proxy.tlsTrustCertPath=/path/to/ca.crt
-proxy.tlsClientAuth=true
+proxy.downstream.tls.enabled=true
+proxy.downstream.tls.mode=enforcing
+proxy.downstream.tls.certPath=/path/to/server.crt
+proxy.downstream.tls.keyPath=/path/to/server.key
+proxy.downstream.tls.trustCertPath=/path/to/ca.crt
+proxy.downstream.tls.clientAuth=true
 ```
 
 > **提示**：以上示例中私钥均未加密（`-nodes` 参数）。如果私钥文件已加密，可通过 JVM 参数 `-Dproxy.tlsKeyPassword=xxx` 传入解密密码。
@@ -231,11 +267,11 @@ proxy.tlsClientAuth=true
 ### 场景一：开发测试
 
 ```
-Client --> Proxy(10913) --> Broker(10911) --> NameServer(9876)
+Client --> Proxy(19876) --> Broker(10911) --> NameServer(9876)
 ```
 
 ```properties
-proxy.listenPort=10913
+proxy.listenPort=19876
 proxy.namesrvAddr=127.0.0.1:9876
 ```
 
@@ -260,11 +296,33 @@ Client --[TLS]--> Proxy --[TCP]--> Broker
 ```
 
 ```properties
-proxy.tlsEnabled=true
-proxy.tlsCertPath=/etc/mq-proxy/server.crt
-proxy.tlsKeyPath=/etc/mq-proxy/server.key
-proxy.tlsTrustCertPath=/etc/mq-proxy/ca.crt
-proxy.tlsClientAuth=true
+proxy.downstream.tls.enabled=true
+proxy.downstream.tls.mode=enforcing
+proxy.downstream.tls.certPath=/etc/mq-proxy/server.crt
+proxy.downstream.tls.keyPath=/etc/mq-proxy/server.key
+proxy.downstream.tls.trustCertPath=/etc/mq-proxy/client-ca.crt
+proxy.downstream.tls.clientAuth=true
+proxy.upstream.broker.tls.enabled=false
+```
+
+### 场景四：Broker 强制 TLS
+
+```
+Client --> Proxy --[TLS]--> Broker
+```
+
+当 Broker 配置为 `tlsMode=enforcing` 时，Proxy 到 Broker 的连接也必须开启 TLS：
+
+```properties
+proxy.downstream.tls.enabled=false
+proxy.upstream.broker.tls.enabled=true
+```
+
+如果 Broker 还要求客户端证书，再配置：
+
+```properties
+proxy.upstream.broker.tls.clientCertPath=/etc/mq-proxy/proxy-client.crt
+proxy.upstream.broker.tls.clientKeyPath=/etc/mq-proxy/proxy-client.key
 ```
 
 ## 环境变量

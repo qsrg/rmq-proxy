@@ -1,5 +1,7 @@
 package com.mq.proxy.core.config;
 
+import com.mq.proxy.core.server.TlsMode;
+
 public class ProxyConfig {
     private int listenPort = 19876;
     private String proxyHost;
@@ -19,6 +21,22 @@ public class ProxyConfig {
     private String tlsKeyPath;
     private String tlsTrustCertPath;
     private boolean tlsClientAuth = false;
+    /**
+     * TLS 模式：disabled / permissive / enforcing。
+     * 当 tlsEnabled=true 时默认为 permissive（动态 TLS 检测，同时支持 TLS 和非 TLS 客户端）。
+     */
+    private TlsMode tlsMode = TlsMode.PERMISSIVE;
+
+    /**
+     * 上游（proxy -> broker）TLS 配置，与下游 TLS 独立。
+     * 语义与 RocketMQ 客户端 useTLS(true) 一致：开启 TLS 加密传输，
+     * 默认不验证 broker 证书（与 RocketMQ 默认 tlsClientAuthServer=false 行为一致）。
+     * 当 broker 配置为 tlsMode=enforcing 时必须启用；
+     * 当 broker 为 permissive 时可选启用以实现端到端加密。
+     */
+    private boolean upstreamTlsEnabled = false;
+    private String upstreamTlsClientCertPath;
+    private String upstreamTlsClientKeyPath;
 
     public int getListenPort() {
         return listenPort;
@@ -154,5 +172,37 @@ public class ProxyConfig {
 
     public void setTlsClientAuth(boolean tlsClientAuth) {
         this.tlsClientAuth = tlsClientAuth;
+    }
+
+    public TlsMode getTlsMode() {
+        return tlsMode;
+    }
+
+    public void setTlsMode(TlsMode tlsMode) {
+        this.tlsMode = tlsMode;
+    }
+
+    public boolean isUpstreamTlsEnabled() {
+        return upstreamTlsEnabled;
+    }
+
+    public void setUpstreamTlsEnabled(boolean upstreamTlsEnabled) {
+        this.upstreamTlsEnabled = upstreamTlsEnabled;
+    }
+
+    public String getUpstreamTlsClientCertPath() {
+        return upstreamTlsClientCertPath;
+    }
+
+    public void setUpstreamTlsClientCertPath(String upstreamTlsClientCertPath) {
+        this.upstreamTlsClientCertPath = upstreamTlsClientCertPath;
+    }
+
+    public String getUpstreamTlsClientKeyPath() {
+        return upstreamTlsClientKeyPath;
+    }
+
+    public void setUpstreamTlsClientKeyPath(String upstreamTlsClientKeyPath) {
+        this.upstreamTlsClientKeyPath = upstreamTlsClientKeyPath;
     }
 }

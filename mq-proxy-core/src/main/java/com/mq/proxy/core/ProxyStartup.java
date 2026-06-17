@@ -7,6 +7,7 @@ import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.engine.ProcessorRegister;
 import com.mq.proxy.core.engine.ProxyBrokerHeartbeatService;
 import com.mq.proxy.core.engine.route.VirtualRouteManager;
+import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
 import com.mq.proxy.core.storage.StorageAdapter;
@@ -69,12 +70,74 @@ public class ProxyStartup {
 
         ProxyBrokerHeartbeatService heartbeatService = new ProxyBrokerHeartbeatService(
                 clientConnectionManager, storageAdapter, proxyConfig.getProxyHost(), proxyConfig.getListenPort(),
-                virtualRouteManager);
+                virtualRouteManager, createBrokerClientConfig(proxyConfig));
 
         messageEngine.setOnSubscriptionNotLatest(() -> heartbeatService.sendHeartbeat());
 
+        NettyServerConfig nettyServerConfig = createServerConfig(proxyConfig, proxyConfig.getListenPort());
+
+        NettyRemotingServer remotingServer = new NettyRemotingServer(nettyServerConfig);
+        remotingServer.setClientConnectionManager(clientConnectionManager);
+        messageEngine.setRemotingServer(remotingServer);
+        heartbeatService.setRemotingServer(remotingServer);
+        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
+        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
+
+        NettyServerConfig vipServerConfig = createVipServerConfig(proxyConfig);
+        NettyRemotingServer vipRemotingServer = new NettyRemotingServer(vipServerConfig, remotingServer);
+        vipRemotingServer.setClientConnectionManager(clientConnectionManager);
+
+        boolean remotingServerStarted = false;
+        boolean vipRemotingServerStarted = false;
+        try {
+            remotingServer.start();
+            remotingServerStarted = true;
+            vipRemotingServer.start();
+            vipRemotingServerStarted = true;
+            heartbeatService.start();
+        } catch (RuntimeException e) {
+            if (vipRemotingServerStarted) {
+                vipRemotingServer.shutdown();
+            }
+            if (remotingServerStarted) {
+                remotingServer.shutdown();
+            }
+            virtualRouteManager.shutdown();
+            storageAdapter.shutdown();
+            throw e;
+        }
+
+        final ProxyBrokerHeartbeatService finalHeartbeatService = heartbeatService;
+        final StorageAdapter finalStorageAdapter = storageAdapter;
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                log.info("Shutting down proxy...");
+                finalHeartbeatService.shutdown();
+                vipRemotingServer.shutdown();
+                remotingServer.shutdown();
+                virtualRouteManager.shutdown();
+                finalStorageAdapter.shutdown();
+                log.info("Proxy shutdown complete");
+            }
+        }));
+
+        log.info("Proxy started successfully on {}:{}, vipPort={}",
+                proxyConfig.getProxyHost(), proxyConfig.getListenPort(), vipServerConfig.getListenPort());
+    }
+
+    private static NettyServerConfig createVipServerConfig(ProxyConfig proxyConfig) {
+        int vipPort = proxyConfig.getListenPort() - 2;
+        if (vipPort <= 0) {
+            throw new IllegalArgumentException("proxy.listenPort must be greater than 2 to support VIP port");
+        }
+        return createServerConfig(proxyConfig, vipPort);
+    }
+
+    private static NettyServerConfig createServerConfig(ProxyConfig proxyConfig, int listenPort) {
         NettyServerConfig nettyServerConfig = new NettyServerConfig();
-        nettyServerConfig.setListenPort(proxyConfig.getListenPort());
+        nettyServerConfig.setListenPort(listenPort);
         nettyServerConfig.setBossThreadNums(proxyConfig.getBossThreadNums());
         nettyServerConfig.setWorkerThreadNums(proxyConfig.getWorkerThreadNums());
         nettyServerConfig.setRequestProcessorThreadNums(proxyConfig.getRequestProcessorThreadNums());
@@ -86,36 +149,13 @@ public class ProxyStartup {
             nettyServerConfig.setTlsKeyPath(proxyConfig.getTlsKeyPath());
             nettyServerConfig.setTlsTrustCertPath(proxyConfig.getTlsTrustCertPath());
             nettyServerConfig.setTlsClientAuth(proxyConfig.isTlsClientAuth());
-            log.info("TLS enabled: certPath={}, keyPath={}, clientAuth={}",
-                    proxyConfig.getTlsCertPath(), proxyConfig.getTlsKeyPath(), proxyConfig.isTlsClientAuth());
+            nettyServerConfig.setTlsMode(proxyConfig.getTlsMode());
+            log.info("TLS enabled: certPath={}, keyPath={}, clientAuth={}, tlsMode={}",
+                    proxyConfig.getTlsCertPath(), proxyConfig.getTlsKeyPath(),
+                    proxyConfig.isTlsClientAuth(), proxyConfig.getTlsMode());
         }
 
-        NettyRemotingServer remotingServer = new NettyRemotingServer(nettyServerConfig);
-        remotingServer.setClientConnectionManager(clientConnectionManager);
-        messageEngine.setRemotingServer(remotingServer);
-        heartbeatService.setRemotingServer(remotingServer);
-        clientConnectionManager.addClientInactiveListener(heartbeatService::unregisterClient);
-        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
-                clientConnectionManager, heartbeatService);
-
-        remotingServer.start();
-        heartbeatService.start();
-
-        final ProxyBrokerHeartbeatService finalHeartbeatService = heartbeatService;
-        final StorageAdapter finalStorageAdapter = storageAdapter;
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                log.info("Shutting down proxy...");
-                finalHeartbeatService.shutdown();
-                remotingServer.shutdown();
-                virtualRouteManager.shutdown();
-                finalStorageAdapter.shutdown();
-                log.info("Proxy shutdown complete");
-            }
-        }));
-
-        log.info("Proxy started successfully on {}:{}", proxyConfig.getProxyHost(), proxyConfig.getListenPort());
+        return nettyServerConfig;
     }
 
     private static StorageAdapter createStorageAdapter(ProxyConfig proxyConfig) {
@@ -133,12 +173,36 @@ public class ProxyStartup {
             storageConfig.setUpstreamClientAsyncSemaphoreValue(proxyConfig.getUpstreamClientAsyncSemaphoreValue());
             storageConfig.setUpstreamClientChannelPoolSize(proxyConfig.getUpstreamClientChannelPoolSize());
             storageConfig.setUpstreamClientKeepAliveIntervalSeconds(proxyConfig.getUpstreamClientKeepAliveIntervalSeconds());
+
+            // 上游 TLS 配置（proxy -> broker），与下游 TLS 独立
+            if (proxyConfig.isUpstreamTlsEnabled()) {
+                storageConfig.setUpstreamTlsEnabled(true);
+                storageConfig.setUpstreamTlsClientCertPath(proxyConfig.getUpstreamTlsClientCertPath());
+                storageConfig.setUpstreamTlsClientKeyPath(proxyConfig.getUpstreamTlsClientKeyPath());
+                log.info("Upstream TLS enabled: clientCertPath={}, clientKeyPath={}",
+                        proxyConfig.getUpstreamTlsClientCertPath(),
+                        proxyConfig.getUpstreamTlsClientKeyPath());
+            }
             adapter.initialize(storageConfig);
 
             return adapter;
         } catch (Exception e) {
             throw new RuntimeException("Failed to create StorageAdapter: " + ROCKETMQ_STORAGE_ADAPTER, e);
         }
+    }
+
+    private static NettyClientConfig createBrokerClientConfig(ProxyConfig proxyConfig) {
+        NettyClientConfig clientConfig = new NettyClientConfig();
+        clientConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
+        clientConfig.setClientAsyncSemaphoreValue(proxyConfig.getUpstreamClientAsyncSemaphoreValue());
+        clientConfig.setClientKeepAliveIntervalSeconds(proxyConfig.getUpstreamClientKeepAliveIntervalSeconds());
+        clientConfig.setClientKeepAliveRequestCode(com.mq.proxy.core.protocol.RequestCode.CHECK_CLIENT_CONFIG);
+        if (proxyConfig.isUpstreamTlsEnabled()) {
+            clientConfig.setTlsEnabled(true);
+            clientConfig.setTlsClientCertPath(proxyConfig.getUpstreamTlsClientCertPath());
+            clientConfig.setTlsClientKeyPath(proxyConfig.getUpstreamTlsClientKeyPath());
+        }
+        return clientConfig;
     }
 
     private static ProxyConfig loadFromClasspath() {

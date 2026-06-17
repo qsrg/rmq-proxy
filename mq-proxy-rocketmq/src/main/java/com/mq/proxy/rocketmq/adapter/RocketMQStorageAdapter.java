@@ -55,6 +55,18 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         clientConfig.setClientKeepAliveIntervalSeconds(config.getUpstreamClientKeepAliveIntervalSeconds());
         clientConfig.setClientKeepAliveRequestCode(RequestCode.CHECK_CLIENT_CONFIG);
 
+        // 上游 TLS 配置（proxy -> broker）
+        // 语义与 RocketMQ 客户端 useTLS(true) 一致：开启 TLS 加密传输，
+        // 默认不验证 broker 证书（与 RocketMQ 默认 tlsClientAuthServer=false 行为一致）。
+        if (config.isUpstreamTlsEnabled()) {
+            clientConfig.setTlsEnabled(true);
+            clientConfig.setTlsClientCertPath(config.getUpstreamTlsClientCertPath());
+            clientConfig.setTlsClientKeyPath(config.getUpstreamTlsClientKeyPath());
+            log.info("Upstream TLS enabled for broker connections: clientCertPath={}, clientKeyPath={}",
+                    config.getUpstreamTlsClientCertPath(),
+                    config.getUpstreamTlsClientKeyPath());
+        }
+
         this.remotingClientRuntime = new NettyClientRuntime(clientConfig, "RocketMQStorageClient");
         this.remotingClients = new NettyRemotingClient[poolSize];
         for (int i = 0; i < poolSize; i++) {
@@ -63,9 +75,9 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         }
         this.remotingClient = this.remotingClients[0];
         this.initialized = true;
-        log.info("RocketMQStorageAdapter initialized: upstreamClientChannelPoolSize={}, upstreamClientAsyncSemaphoreValue={}, upstreamClientKeepAliveIntervalSeconds={}",
+        log.info("RocketMQStorageAdapter initialized: upstreamClientChannelPoolSize={}, upstreamClientAsyncSemaphoreValue={}, upstreamClientKeepAliveIntervalSeconds={}, upstreamTlsEnabled={}",
                 poolSize, config.getUpstreamClientAsyncSemaphoreValue(),
-                config.getUpstreamClientKeepAliveIntervalSeconds());
+                config.getUpstreamClientKeepAliveIntervalSeconds(), config.isUpstreamTlsEnabled());
     }
 
     @Override

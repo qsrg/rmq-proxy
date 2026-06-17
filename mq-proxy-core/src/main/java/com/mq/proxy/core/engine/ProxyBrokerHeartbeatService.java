@@ -60,10 +60,17 @@ public class ProxyBrokerHeartbeatService implements UpstreamConsumerSessionManag
     public ProxyBrokerHeartbeatService(ClientConnectionManager clientConnectionManager,
                                        StorageAdapter storageAdapter, String proxyHost, int proxyPort,
                                        VirtualRouteManager virtualRouteManager) {
+        this(clientConnectionManager, storageAdapter, proxyHost, proxyPort, virtualRouteManager, new NettyClientConfig());
+    }
+
+    public ProxyBrokerHeartbeatService(ClientConnectionManager clientConnectionManager,
+                                       StorageAdapter storageAdapter, String proxyHost, int proxyPort,
+                                       VirtualRouteManager virtualRouteManager,
+                                       NettyClientConfig nettyClientConfig) {
         this.clientConnectionManager = clientConnectionManager;
         this.storageAdapter = storageAdapter;
         this.virtualRouteManager = virtualRouteManager;
-        this.nettyClientConfig = new NettyClientConfig();
+        this.nettyClientConfig = nettyClientConfig;
         this.heartbeatClientRuntime = new NettyClientRuntime(this.nettyClientConfig, "BrokerHeartbeatClient");
     }
 

@@ -4,6 +4,7 @@ import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.protocol.RequestCode;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
+import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.InvokeCallback;
@@ -50,6 +51,35 @@ public class ProxyBrokerHeartbeatServiceTest {
             assertSame(eventLoopGroup(first), eventLoopGroup(second));
             assertSame(callbackExecutor(first), callbackExecutor(second));
             assertSame(responseTableScanExecutor(first), responseTableScanExecutor(second));
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    public void testHeartbeatServiceUsesSuppliedBrokerClientTlsConfig() throws Exception {
+        NettyClientConfig brokerClientConfig = new NettyClientConfig();
+        brokerClientConfig.setTlsEnabled(true);
+        brokerClientConfig.setTlsClientCertPath("/path/to/proxy-client.crt");
+        brokerClientConfig.setTlsClientKeyPath("/path/to/proxy-client.key");
+
+        ProxyBrokerHeartbeatService service = new ProxyBrokerHeartbeatService(
+                new ClientConnectionManager(),
+                mock(StorageAdapter.class),
+                "127.0.0.1",
+                10911,
+                new TestVirtualRouteManager("broker-a:10911"),
+                brokerClientConfig);
+
+        try {
+            Field field = ProxyBrokerHeartbeatService.class.getDeclaredField("nettyClientConfig");
+            field.setAccessible(true);
+            NettyClientConfig actualConfig = (NettyClientConfig) field.get(service);
+
+            assertSame(brokerClientConfig, actualConfig);
+            assertTrue(actualConfig.isTlsEnabled());
+            assertEquals("/path/to/proxy-client.crt", actualConfig.getTlsClientCertPath());
+            assertEquals("/path/to/proxy-client.key", actualConfig.getTlsClientKeyPath());
         } finally {
             service.shutdown();
         }

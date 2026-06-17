@@ -1,6 +1,7 @@
 package com.mq.proxy.core;
 
 import com.mq.proxy.core.config.ProxyConfig;
+import com.mq.proxy.core.server.NettyServerConfig;
 import org.junit.Test;
 
 import java.lang.reflect.InvocationTargetException;
@@ -27,5 +28,26 @@ public class ProxyStartupTest {
             assertEquals(IllegalArgumentException.class, cause.getClass());
             assertEquals("proxy.namesrvAddr must not be blank", cause.getMessage());
         }
+    }
+
+    @Test
+    public void shouldCreateVipServerConfigOnListenPortMinusTwo() throws Exception {
+        ProxyConfig config = new ProxyConfig();
+        config.setListenPort(19876);
+        config.setBossThreadNums(2);
+        config.setWorkerThreadNums(3);
+        config.setRequestProcessorThreadNums(4);
+        config.setPullExecutorThreadNums(5);
+
+        Method method = ProxyStartup.class.getDeclaredMethod("createVipServerConfig", ProxyConfig.class);
+        method.setAccessible(true);
+
+        NettyServerConfig vipConfig = (NettyServerConfig) method.invoke(null, config);
+
+        assertEquals(19874, vipConfig.getListenPort());
+        assertEquals(2, vipConfig.getBossThreadNums());
+        assertEquals(3, vipConfig.getWorkerThreadNums());
+        assertEquals(4, vipConfig.getRequestProcessorThreadNums());
+        assertEquals(5, vipConfig.getPullExecutorThreadNums());
     }
 }

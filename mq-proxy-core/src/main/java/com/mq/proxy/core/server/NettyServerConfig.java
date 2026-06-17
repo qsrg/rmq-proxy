@@ -18,6 +18,11 @@ public class NettyServerConfig {
     private String tlsKeyPath;
     private String tlsTrustCertPath;
     private boolean tlsClientAuth = false;
+    /**
+     * TLS 模式：disabled / permissive / enforcing。
+     * 当 tlsEnabled=true 时默认为 permissive（动态 TLS 检测，同时支持 TLS 和非 TLS 客户端）。
+     */
+    private TlsMode tlsMode = TlsMode.PERMISSIVE;
 
     public int getListenPort() {
         return listenPort;
@@ -145,5 +150,13 @@ public class NettyServerConfig {
 
     public void setTlsClientAuth(boolean tlsClientAuth) {
         this.tlsClientAuth = tlsClientAuth;
+    }
+
+    public TlsMode getTlsMode() {
+        return tlsMode;
+    }
+
+    public void setTlsMode(TlsMode tlsMode) {
+        this.tlsMode = tlsMode;
     }
 }

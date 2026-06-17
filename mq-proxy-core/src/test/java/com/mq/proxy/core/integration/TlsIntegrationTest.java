@@ -15,6 +15,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.server.NettyServerConfig;
+import com.mq.proxy.core.server.TlsMode;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import org.junit.After;
@@ -42,6 +43,7 @@ public class TlsIntegrationTest {
     private VirtualRouteManager virtualRouteManager;
     private ClientConnectionManager clientConnectionManager;
     private ProxyBrokerHeartbeatService heartbeatService;
+    private MessageEngine messageEngine;
 
     @Before
     public void setUp() throws Exception {
@@ -55,7 +57,7 @@ public class TlsIntegrationTest {
         StorageConfig storageConfig = new StorageConfig();
         mockStorageAdapter.initialize(storageConfig);
 
-        MessageEngine messageEngine = new MessageEngine(mockStorageAdapter);
+        messageEngine = new MessageEngine(mockStorageAdapter);
 
         virtualRouteManager = new VirtualRouteManager();
 
@@ -67,6 +69,8 @@ public class TlsIntegrationTest {
         nettyServerConfig.setTlsEnabled(true);
         nettyServerConfig.setTlsCertPath(CERT_PATH);
         nettyServerConfig.setTlsKeyPath(KEY_PATH);
+        // 使用 ENFORCING 模式：强制 TLS，非 TLS 客户端将被拒绝
+        nettyServerConfig.setTlsMode(TlsMode.ENFORCING);
 
         remotingServer = new NettyRemotingServer(nettyServerConfig);
         remotingServer.setClientConnectionManager(clientConnectionManager);
@@ -234,10 +238,84 @@ public class TlsIntegrationTest {
 
             try {
                 nonTlsClient.invokeSync("127.0.0.1:" + port, request, 3000);
-                fail("Non-TLS client should not be able to connect to TLS-enabled server");
+                fail("Non-TLS client should not be able to connect to TLS-enabled server in ENFORCING mode");
             } catch (Exception e) {
-                // Expected: non-TLS client cannot communicate with TLS server
+                // Expected: non-TLS client cannot communicate with TLS server in ENFORCING mode
             }
+        } finally {
+            nonTlsClient.shutdown();
+        }
+    }
+
+    /**
+     * 验证 PERMISSIVE 模式：同一端口同时支持 TLS 和非 TLS 客户端。
+     * 这是与 RocketMQ 原生服务器兼容的关键行为。
+     */
+    @Test
+    public void testPermissiveModeSupportsBothTlsAndNonTls() throws Exception {
+        // 停止 ENFORCING 模式的 server，启动 PERMISSIVE 模式的 server
+        if (remotingServer != null) {
+            remotingServer.shutdown();
+        }
+        if (heartbeatService != null) {
+            heartbeatService.shutdown();
+        }
+
+        NettyServerConfig permissiveConfig = new NettyServerConfig();
+        permissiveConfig.setListenPort(port);
+        permissiveConfig.setTlsEnabled(true);
+        permissiveConfig.setTlsCertPath(CERT_PATH);
+        permissiveConfig.setTlsKeyPath(KEY_PATH);
+        permissiveConfig.setTlsMode(TlsMode.PERMISSIVE);
+
+        remotingServer = new NettyRemotingServer(permissiveConfig);
+        remotingServer.setClientConnectionManager(clientConnectionManager);
+        messageEngine.setRemotingServer(remotingServer);
+        heartbeatService.setRemotingServer(remotingServer);
+        ProcessorRegister.registerProcessors(remotingServer, messageEngine, virtualRouteManager,
+                clientConnectionManager, heartbeatService);
+        remotingServer.start();
+        heartbeatService.start();
+
+        // 1. TLS 客户端应能正常通信
+        RemotingCommand tlsRequest = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> tlsExtFields = new HashMap<>();
+        tlsExtFields.put("producerGroup", "permissiveTlsProducerGroup");
+        tlsExtFields.put("topic", "permissiveTlsTopic");
+        tlsExtFields.put("defaultTopic", "defaultTopic");
+        tlsExtFields.put("defaultTopicQueueNums", "4");
+        tlsExtFields.put("queueId", "0");
+        tlsExtFields.put("sysFlag", "0");
+        tlsExtFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        tlsExtFields.put("flag", "0");
+        tlsRequest.setExtFields(tlsExtFields);
+        tlsRequest.setBody("tls message in permissive mode".getBytes());
+
+        RemotingCommand tlsResponse = tlsClient.invokeSync("127.0.0.1:" + port, tlsRequest, 5000);
+        assertEquals("TLS client should succeed in PERMISSIVE mode",
+                RemotingSysResponseCode.SUCCESS, tlsResponse.getCode());
+
+        // 2. 非 TLS 客户端也应能正常通信
+        NettyClientConfig nonTlsClientConfig = new NettyClientConfig();
+        NettyRemotingClient nonTlsClient = new NettyRemotingClient(nonTlsClientConfig);
+        nonTlsClient.start();
+        try {
+            RemotingCommand nonTlsRequest = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+            HashMap<String, String> nonTlsExtFields = new HashMap<>();
+            nonTlsExtFields.put("producerGroup", "permissiveNonTlsProducerGroup");
+            nonTlsExtFields.put("topic", "permissiveNonTlsTopic");
+            nonTlsExtFields.put("defaultTopic", "defaultTopic");
+            nonTlsExtFields.put("defaultTopicQueueNums", "4");
+            nonTlsExtFields.put("queueId", "0");
+            nonTlsExtFields.put("sysFlag", "0");
+            nonTlsExtFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+            nonTlsExtFields.put("flag", "0");
+            nonTlsRequest.setExtFields(nonTlsExtFields);
+            nonTlsRequest.setBody("non-tls message in permissive mode".getBytes());
+
+            RemotingCommand nonTlsResponse = nonTlsClient.invokeSync("127.0.0.1:" + port, nonTlsRequest, 5000);
+            assertEquals("Non-TLS client should also succeed in PERMISSIVE mode",
+                    RemotingSysResponseCode.SUCCESS, nonTlsResponse.getCode());
         } finally {
             nonTlsClient.shutdown();
         }
