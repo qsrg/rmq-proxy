@@ -9,14 +9,18 @@ import com.mq.proxy.core.protocol.header.SendMessageRequestHeader;
 import com.mq.proxy.core.protocol.header.SendMessageRequestHeaderV2;
 import com.mq.proxy.core.protocol.header.SendMessageResponseHeader;
 import com.mq.proxy.core.server.RemotingProcessor;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PutResult;
 import io.netty.channel.Channel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
-import java.util.Map;
 
 public class SendMessageProcessor implements RemotingProcessor {
+
+    private static final Logger log = LoggerFactory.getLogger(SendMessageProcessor.class);
 
     private final MessageEngine messageEngine;
 
@@ -42,9 +46,24 @@ public class SendMessageProcessor implements RemotingProcessor {
         }
 
         InternalMessage message = InternalMessage.createFromSendMessageRequest(requestHeader, request.getBody());
-        PutResult putResult = messageEngine.putMessage(message);
+        messageEngine.putMessageAsync(message, new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+                writeResponse(channel, request, buildResponse(putResult));
+            }
 
-        if (putResult.isSuccess()) {
+            @Override
+            public void onException(Throwable throwable) {
+                String remark = throwable != null ? throwable.getMessage() : "async send failed";
+                writeResponse(channel, request,
+                        RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, remark));
+            }
+        });
+        return null;
+    }
+
+    private RemotingCommand buildResponse(PutResult putResult) {
+        if (putResult != null && putResult.isSuccess()) {
             SendMessageResponseHeader responseHeader = new SendMessageResponseHeader();
             responseHeader.setMsgId(putResult.getMsgId());
             responseHeader.setQueueId(putResult.getQueueId());
@@ -56,9 +75,25 @@ public class SendMessageProcessor implements RemotingProcessor {
             response.setCustomHeader(responseHeader);
             response.makeCustomHeaderToNet();
             return response;
-        } else {
-            return RemotingCommand.createResponseCommand(putResult.getResponseCode(), putResult.getRemark());
         }
+        if (putResult == null) {
+            return RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR,
+                    "async send returned null result");
+        }
+        return RemotingCommand.createResponseCommand(putResult.getResponseCode(), putResult.getRemark());
+    }
+
+    private void writeResponse(Channel channel, RemotingCommand request, RemotingCommand response) {
+        if (request.isOnewayRPC()) {
+            return;
+        }
+        if (channel == null || !channel.isActive()) {
+            log.debug("skip async send response because channel is inactive, opaque={}", request.getOpaque());
+            return;
+        }
+        response.setOpaque(request.getOpaque());
+        response.setSerializeTypeCurrentRPC(request.getSerializeTypeCurrentRPC());
+        channel.writeAndFlush(response);
     }
 
     private SendMessageRequestHeader parseSendMessageRequestHeader(RemotingCommand request) {

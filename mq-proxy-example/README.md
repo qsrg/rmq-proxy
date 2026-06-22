@@ -310,9 +310,11 @@ proxy.upstreamClientChannelPoolSize=4
 proxy.upstreamClientKeepAliveIntervalSeconds=30
 ```
 
-`proxy.requestProcessorThreadNums` 控制普通请求处理线程数，`SEND_MESSAGE` 会占用这个线程同步等待 broker 返回。同步刷盘、同步复制场景下，如果提高压测端 `producerThreads` 后 TPS 不再上涨，可以按 `16 -> 32 -> 64 -> 128` 调大该值验证 proxy 是否卡在请求处理线程池。
+`SEND_MESSAGE` 使用异步方式转发到 broker，只有 broker 返回最终结果后 Proxy 才向客户端返回成功或失败，因此不会改变客户端同步发送、同步刷盘和同步复制语义。`proxy.requestProcessorThreadNums` 只负责请求解析和发起上游调用，不再同步等待 broker，可以保持在 `CPU 核心数 x 2` 左右。
 
-也可以不改配置文件，启动时临时覆盖：
+Proxy 到 broker 的异步在途请求由 `proxy.upstreamClientAsyncSemaphoreValue` 限制，默认 `4096`。压测时如果出现异步并发额度耗尽，应结合 Proxy 内存、broker RT 和客户端超时调整该值，避免无限堆积。
+
+需要临时调整请求处理线程时，可以不改配置文件：
 
 ```bash
 JAVA_OPT="-Dproxy.requestProcessorThreadNums=64" sh bin/proxy.sh start

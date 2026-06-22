@@ -13,6 +13,14 @@ public interface StorageAdapter {
 
     PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception;
 
+    default void putMessageAsync(InternalMessage message, String brokerAddr, PutMessageCallback callback) {
+        try {
+            callback.onSuccess(putMessage(message, brokerAddr));
+        } catch (Throwable throwable) {
+            callback.onException(throwable);
+        }
+    }
+
     PullResult pullMessage(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums, int sysFlag, long commitOffset, long suspendTimeoutMillis, String subscription, String expressionType, long subVersion, String brokerAddr) throws Exception;
 
     void pullMessageAsync(String consumerGroup, String topic, int queueId, long queueOffset, int maxMsgNums,

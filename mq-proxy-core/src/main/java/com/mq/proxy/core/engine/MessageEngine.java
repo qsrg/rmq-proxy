@@ -5,6 +5,7 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.server.NettyRemotingServer;
 import com.mq.proxy.core.storage.PullMessageCallback;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.OffsetResult;
@@ -15,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MessageEngine {
 
@@ -57,6 +59,32 @@ public class MessageEngine {
             return storageAdapter.putMessage(message, brokerAddr);
         } catch (Exception e) {
             return PutResult.fail(1, e.getMessage());
+        }
+    }
+
+    public void putMessageAsync(final InternalMessage message, final PutMessageCallback callback) {
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        final PutMessageCallback onceCallback = new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+                if (completed.compareAndSet(false, true)) {
+                    callback.onSuccess(putResult);
+                }
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+                if (completed.compareAndSet(false, true)) {
+                    callback.onException(throwable);
+                }
+            }
+        };
+
+        try {
+            String brokerAddr = resolveBrokerAddr(message.getBrokerName(), message.getTopic());
+            storageAdapter.putMessageAsync(message, brokerAddr, onceCallback);
+        } catch (Throwable throwable) {
+            onceCallback.onException(throwable);
         }
     }
 

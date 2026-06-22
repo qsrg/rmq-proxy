@@ -6,8 +6,11 @@ import ch.qos.logback.core.read.ListAppender;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.engine.route.VirtualRouteManager;
 import com.mq.proxy.core.storage.PullMessageCallback;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
+import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
+import com.mq.proxy.core.storage.model.PutResult;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -15,6 +18,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
@@ -113,5 +117,37 @@ public class MessageEngineTest {
         assertEquals(0L, callbackResult.get().getMinOffset());
         assertEquals(5L, callbackResult.get().getMaxOffset());
         assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, callbackResult.get().getResponseCode());
+    }
+
+    @Test
+    public void testPutMessageAsyncCompletesCallbackOnlyOnceWhenAdapterCallbacksThenThrows() {
+        StorageAdapter adapter = mock(StorageAdapter.class);
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        MessageEngine messageEngine = new MessageEngine(adapter);
+        messageEngine.setVirtualRouteManager(routeManager);
+        InternalMessage message = new InternalMessage();
+        message.setBrokerName("broker-a");
+        message.setTopic("TopicA");
+        when(routeManager.getRealBrokerAddr("broker-a")).thenReturn("127.0.0.1:10911");
+        doAnswer(invocation -> {
+            PutMessageCallback callback = invocation.getArgument(2);
+            callback.onSuccess(PutResult.success("msg-1", 0, 1L));
+            throw new RuntimeException("late invokeAsync exception");
+        }).when(adapter).putMessageAsync(eq(message), eq("127.0.0.1:10911"), any(PutMessageCallback.class));
+        AtomicInteger callbackCount = new AtomicInteger();
+
+        messageEngine.putMessageAsync(message, new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+                callbackCount.incrementAndGet();
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+                callbackCount.incrementAndGet();
+            }
+        });
+
+        assertEquals(1, callbackCount.get());
     }
 }

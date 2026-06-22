@@ -4,13 +4,16 @@ import com.mq.proxy.core.engine.MessageEngine;
 import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.RemotingSysResponseCode;
 import com.mq.proxy.core.protocol.RequestCode;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PutResult;
+import io.netty.channel.Channel;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
@@ -24,6 +27,17 @@ public class SendMessageProcessorTest {
     @Before
     public void setUp() {
         mockAdapter = mock(StorageAdapter.class);
+        doAnswer(invocation -> {
+            InternalMessage message = invocation.getArgument(0);
+            String brokerAddr = invocation.getArgument(1);
+            PutMessageCallback callback = invocation.getArgument(2);
+            try {
+                callback.onSuccess(mockAdapter.putMessage(message, brokerAddr));
+            } catch (Throwable throwable) {
+                callback.onException(throwable);
+            }
+            return null;
+        }).when(mockAdapter).putMessageAsync(any(InternalMessage.class), any(), any(PutMessageCallback.class));
         messageEngine = new MessageEngine(mockAdapter);
         processor = new SendMessageProcessor(messageEngine);
     }
@@ -48,7 +62,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("hello world".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -83,7 +97,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("hello v2".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -114,7 +128,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("test".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(14, response.getCode());
@@ -139,7 +153,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("test".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, response.getCode());
@@ -166,7 +180,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("retry message".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -198,7 +212,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("batch body".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -227,7 +241,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("delayed message".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -259,7 +273,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("delayed v2 message".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -275,7 +289,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(new HashMap<>());
         request.setBody("test".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.REQUEST_CODE_NOT_SUPPORTED, response.getCode());
@@ -301,7 +315,7 @@ public class SendMessageProcessorTest {
         request.setExtFields(extFields);
         request.setBody("orderly message".getBytes());
 
-        RemotingCommand response = processor.processRequest(null, request);
+        RemotingCommand response = processRequest(request);
 
         assertNotNull(response);
         assertEquals(RemotingSysResponseCode.SUCCESS, response.getCode());
@@ -311,5 +325,107 @@ public class SendMessageProcessorTest {
         verify(mockAdapter).putMessage(argThat(msg ->
                 msg.getQueueId() != null && msg.getQueueId() == 2
         ), any());
+    }
+
+    @Test
+    public void shouldReturnNullAndWriteResponseAfterAsyncBrokerResult() throws Exception {
+        doAnswer(invocation -> {
+            PutMessageCallback callback = invocation.getArgument(2);
+            callback.onSuccess(PutResult.success("async-msg-1", 1, 500L));
+            return null;
+        }).when(mockAdapter).putMessageAsync(any(InternalMessage.class), any(), any(PutMessageCallback.class));
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "asyncProducerGroup");
+        extFields.put("topic", "AsyncTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "1");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        request.setExtFields(extFields);
+        request.setBody("async message".getBytes());
+        request.setOpaque(1234);
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+
+        RemotingCommand immediateResponse = processor.processRequest(channel, request);
+
+        assertNull(immediateResponse);
+        verify(channel).writeAndFlush(argThat(value -> {
+            RemotingCommand response = (RemotingCommand) value;
+            return response.getCode() == RemotingSysResponseCode.SUCCESS
+                    && response.getOpaque() == 1234
+                    && "async-msg-1".equals(response.getExtFields().get("msgId"));
+        }));
+    }
+
+    @Test
+    public void shouldNotWriteResponseBeforeAsyncBrokerResultCompletes() throws Exception {
+        AtomicReference<PutMessageCallback> callbackRef = new AtomicReference<>();
+        doAnswer(invocation -> {
+            callbackRef.set(invocation.getArgument(2));
+            return null;
+        }).when(mockAdapter).putMessageAsync(any(InternalMessage.class), any(), any(PutMessageCallback.class));
+        RemotingCommand request = createAsyncSendRequest();
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+
+        RemotingCommand immediateResponse = processor.processRequest(channel, request);
+
+        assertNull(immediateResponse);
+        verify(channel, never()).writeAndFlush(any());
+
+        callbackRef.get().onSuccess(PutResult.success("async-msg-2", 0, 600L));
+
+        verify(channel).writeAndFlush(any(RemotingCommand.class));
+    }
+
+    @Test
+    public void shouldNotWriteResponseForOnewaySend() throws Exception {
+        doAnswer(invocation -> {
+            PutMessageCallback callback = invocation.getArgument(2);
+            callback.onSuccess(PutResult.success("oneway-msg", 0, 700L));
+            return null;
+        }).when(mockAdapter).putMessageAsync(any(InternalMessage.class), any(), any(PutMessageCallback.class));
+        RemotingCommand request = createAsyncSendRequest();
+        request.markOnewayRPC();
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+
+        assertNull(processor.processRequest(channel, request));
+
+        verify(channel, never()).writeAndFlush(any());
+    }
+
+    private RemotingCommand createAsyncSendRequest() {
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, null);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("producerGroup", "asyncProducerGroup");
+        extFields.put("topic", "AsyncTopic");
+        extFields.put("defaultTopic", "defaultTopic");
+        extFields.put("defaultTopicQueueNums", "4");
+        extFields.put("queueId", "0");
+        extFields.put("sysFlag", "0");
+        extFields.put("bornTimestamp", String.valueOf(System.currentTimeMillis()));
+        extFields.put("flag", "0");
+        request.setExtFields(extFields);
+        request.setBody("async message".getBytes());
+        return request;
+    }
+
+    private RemotingCommand processRequest(RemotingCommand request) throws Exception {
+        Channel channel = mock(Channel.class);
+        when(channel.isActive()).thenReturn(true);
+        AtomicReference<RemotingCommand> asyncResponse = new AtomicReference<>();
+        when(channel.writeAndFlush(any())).thenAnswer(invocation -> {
+            asyncResponse.set(invocation.getArgument(0));
+            return null;
+        });
+
+        RemotingCommand immediateResponse = processor.processRequest(channel, request);
+        return immediateResponse != null ? immediateResponse : asyncResponse.get();
     }
 }

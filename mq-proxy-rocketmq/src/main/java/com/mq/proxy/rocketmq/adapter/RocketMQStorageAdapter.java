@@ -14,6 +14,7 @@ import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyClientRuntime;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.PullMessageCallback;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.core.storage.model.InternalMessage;
@@ -23,6 +24,7 @@ import com.mq.proxy.core.storage.model.PutResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class RocketMQStorageAdapter implements StorageAdapter {
@@ -103,6 +105,57 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     @Override
     public PutResult putMessage(InternalMessage message, String brokerAddr) throws Exception {
         checkInitialized();
+        RemotingCommand request = createSendMessageRequest(message);
+        String targetAddr = resolveBrokerAddr(brokerAddr);
+        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS);
+        return processPutMessageResponse(response);
+    }
+
+    @Override
+    public void putMessageAsync(InternalMessage message, String brokerAddr, PutMessageCallback callback) {
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        final PutMessageCallback onceCallback = new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+                if (completed.compareAndSet(false, true)) {
+                    callback.onSuccess(putResult);
+                }
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+                if (completed.compareAndSet(false, true)) {
+                    callback.onException(throwable);
+                }
+            }
+        };
+
+        try {
+            checkInitialized();
+            final RemotingCommand request = createSendMessageRequest(message);
+            final String targetAddr = resolveBrokerAddr(brokerAddr);
+            selectRemotingClient().invokeAsync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS,
+                    new InvokeCallback() {
+                        @Override
+                        public void operationSucceed(RemotingCommand response) {
+                            try {
+                                onceCallback.onSuccess(processPutMessageResponse(response));
+                            } catch (Throwable throwable) {
+                                onceCallback.onException(throwable);
+                            }
+                        }
+
+                        @Override
+                        public void operationFail(Throwable throwable) {
+                            onceCallback.onException(throwable);
+                        }
+                    });
+        } catch (Throwable throwable) {
+            onceCallback.onException(throwable);
+        }
+    }
+
+    private RemotingCommand createSendMessageRequest(InternalMessage message) {
         SendMessageRequestHeader header = new SendMessageRequestHeader();
         header.setProducerGroup(message.getProducerGroup());
         header.setTopic(message.getTopic());
@@ -122,10 +175,10 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE, header);
         request.setBody(message.getBody());
         request.makeCustomHeaderToNet();
+        return request;
+    }
 
-        String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
-
+    private PutResult processPutMessageResponse(RemotingCommand response) {
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             String msgId = response.getExtFields() != null ? response.getExtFields().get("msgId") : null;
             int queueId = response.getExtFields() != null && response.getExtFields().get("queueId") != null

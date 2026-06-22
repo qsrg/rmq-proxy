@@ -6,8 +6,11 @@ import com.mq.proxy.core.server.InvokeCallback;
 import com.mq.proxy.core.server.NettyClientConfig;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.PullMessageCallback;
+import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageConfig;
+import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
+import com.mq.proxy.core.storage.model.PutResult;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
@@ -142,6 +145,45 @@ public class RocketMQStorageAdapterTest {
 
         assertEquals(1, first.invokeCount);
         assertEquals(1, second.invokeCount);
+    }
+
+    @Test
+    public void testPutMessageAsyncReturnsBrokerResult() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        RemotingCommand response = RemotingCommand.createResponseCommand(0);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("msgId", "async-msg-1");
+        extFields.put("queueId", "1");
+        extFields.put("queueOffset", "500");
+        response.setExtFields(extFields);
+        setField(adapter, "initialized", true);
+        setField(adapter, "remotingClient", new AsyncFixedResponseRemotingClient(response));
+
+        InternalMessage message = new InternalMessage();
+        message.setProducerGroup("producer-group");
+        message.setTopic("AsyncTopic");
+        message.setQueueId(1);
+        message.setBody("async body".getBytes());
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<PutResult> callbackResult = new AtomicReference<>();
+
+        adapter.putMessageAsync(message, "127.0.0.1:10911", new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+                callbackResult.set(putResult);
+                latch.countDown();
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+            }
+        });
+
+        assertTrue(latch.await(1, TimeUnit.SECONDS));
+        assertTrue(callbackResult.get().isSuccess());
+        assertEquals("async-msg-1", callbackResult.get().getMsgId());
+        assertEquals(1, callbackResult.get().getQueueId());
+        assertEquals(500L, callbackResult.get().getQueueOffset());
     }
 
     private static RemotingCommand createPullNotFoundResponse(long nextBeginOffset, long minOffset, long maxOffset) {
