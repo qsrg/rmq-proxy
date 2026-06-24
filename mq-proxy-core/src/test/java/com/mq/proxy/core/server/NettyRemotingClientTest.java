@@ -305,6 +305,41 @@ public class NettyRemotingClientTest {
     }
 
     @Test
+    public void testAsyncStatsExposeInFlightRequestsAndAvailablePermits() throws Exception {
+        NettyClientConfig config = new NettyClientConfig();
+        config.setClientAsyncSemaphoreValue(2);
+        ExposedNettyRemotingClient client = new ExposedNettyRemotingClient(config);
+        Channel channel = mock(Channel.class);
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(channel.isActive()).thenReturn(true);
+        when(ctx.channel()).thenReturn(channel);
+        client.setFixedChannel(channel);
+        channelTable(client).put("171.31.208.1:9876", channel);
+
+        RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_BROKER_CLUSTER_INFO, null);
+        client.invokeAsync("171.31.208.1:9876", request, 3000, new InvokeCallback() {
+            @Override
+            public void operationSucceed(RemotingCommand response) {
+            }
+
+            @Override
+            public void operationFail(Throwable throwable) {
+            }
+        });
+
+        assertEquals(1, client.getInFlightRequestCount());
+        assertEquals(1, client.getAsyncSemaphoreAvailablePermits());
+        assertEquals(2, client.getAsyncSemaphoreLimit());
+
+        RemotingCommand response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SUCCESS, "OK");
+        response.setOpaque(request.getOpaque());
+        client.newHandler().channelRead0(ctx, response);
+
+        assertEquals(0, client.getInFlightRequestCount());
+        assertEquals(2, client.getAsyncSemaphoreAvailablePermits());
+    }
+
+    @Test
     public void testClientHandlerFailsPendingAsyncRequestsWhenRemoteDisconnects() throws Exception {
         ExposedNettyRemotingClient client = new ExposedNettyRemotingClient();
         Channel channel = mock(Channel.class);

@@ -55,6 +55,14 @@ public class ProxyConfigLoader {
             config.setUpstreamClientAsyncSemaphoreValue(parseInt("proxy.upstreamClientAsyncSemaphoreValue",
                     props.getProperty("proxy.upstreamClientAsyncSemaphoreValue")));
         }
+        if (props.containsKey("proxy.upstreamProducerAsyncSemaphoreValue")) {
+            config.setUpstreamProducerAsyncSemaphoreValue(parseInt("proxy.upstreamProducerAsyncSemaphoreValue",
+                    props.getProperty("proxy.upstreamProducerAsyncSemaphoreValue")));
+        }
+        if (props.containsKey("proxy.upstreamPullAsyncSemaphoreValue")) {
+            config.setUpstreamPullAsyncSemaphoreValue(parseInt("proxy.upstreamPullAsyncSemaphoreValue",
+                    props.getProperty("proxy.upstreamPullAsyncSemaphoreValue")));
+        }
         if (props.containsKey("proxy.upstreamClientChannelPoolSize")) {
             config.setUpstreamClientChannelPoolSize(parseInt("proxy.upstreamClientChannelPoolSize",
                     props.getProperty("proxy.upstreamClientChannelPoolSize")));

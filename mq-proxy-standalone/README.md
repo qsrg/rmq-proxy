@@ -123,9 +123,13 @@ proxy.namesrvAddr=10.0.0.1:9876;10.0.0.2:9876
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `proxy.upstreamClientAsyncSemaphoreValue` | 4096 | Proxy 转发到 Broker 的异步请求总并发上限 |
+| `proxy.upstreamClientAsyncSemaphoreValue` | 4096 | 兼容旧配置；未配置专用值时同时作为生产、Pull 异步请求并发默认值 |
+| `proxy.upstreamProducerAsyncSemaphoreValue` | 4096 | Proxy 转发生产请求到 Broker 的异步在途请求上限 |
+| `proxy.upstreamPullAsyncSemaphoreValue` | 4096 | Proxy 转发 Pull 长轮询请求到 Broker 的异步在途请求上限 |
 | `proxy.upstreamClientChannelPoolSize` | 4 | Proxy 到 Broker 的 Netty 客户端连接池大小 |
 | `proxy.upstreamClientKeepAliveIntervalSeconds` | 30 | Proxy 到 Broker 连接的 keepalive 请求间隔，0 表示关闭 |
+
+Proxy 每 10 秒打印一次上游客户端统计，包含 producer/pull 各连接的 `inFlight`、`availablePermits`、`limit`。如果 `inFlight` 持续上升且 `availablePermits` 持续接近 0，说明上游响应处理开始积压。
 
 ### 下游 TLS：Client -> Proxy
 

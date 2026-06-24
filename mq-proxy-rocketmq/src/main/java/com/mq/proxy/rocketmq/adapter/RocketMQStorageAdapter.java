@@ -24,6 +24,10 @@ import com.mq.proxy.core.storage.model.PutResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -33,11 +37,17 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     private static final long DEFAULT_REQUEST_TIMEOUT_MILLIS = 3000L;
     private static final long LONG_POLL_TIMEOUT_MARGIN_MILLIS = 5000L;
     private static final long MIN_LONG_POLL_REQUEST_TIMEOUT_MILLIS = 30000L;
+    private static final long UPSTREAM_STATS_LOG_INTERVAL_SECONDS = 10L;
 
     private NettyRemotingClient remotingClient;
     private NettyRemotingClient[] remotingClients;
+    private NettyRemotingClient[] producerRemotingClients;
+    private NettyRemotingClient[] pullRemotingClients;
     private NettyClientRuntime remotingClientRuntime;
+    private ScheduledExecutorService upstreamStatsLogExecutor;
     private final AtomicInteger remotingClientSelector = new AtomicInteger(0);
+    private final AtomicInteger producerRemotingClientSelector = new AtomicInteger(0);
+    private final AtomicInteger pullRemotingClientSelector = new AtomicInteger(0);
     private StorageConfig storageConfig;
     private volatile boolean initialized = false;
 
@@ -49,11 +59,116 @@ public class RocketMQStorageAdapter implements StorageAdapter {
     public void initialize(StorageConfig config) throws Exception {
         this.storageConfig = config;
         int poolSize = Math.max(1, config.getUpstreamClientChannelPoolSize());
+        NettyClientConfig producerClientConfig = createNettyClientConfig(config,
+                config.getUpstreamProducerAsyncSemaphoreValue(), poolSize);
+        NettyClientConfig pullClientConfig = createNettyClientConfig(config,
+                config.getUpstreamPullAsyncSemaphoreValue(), poolSize);
+
+        this.remotingClientRuntime = new NettyClientRuntime(producerClientConfig, "RocketMQStorageClient");
+        this.producerRemotingClients = new NettyRemotingClient[poolSize];
+        this.pullRemotingClients = new NettyRemotingClient[poolSize];
+        for (int i = 0; i < poolSize; i++) {
+            this.producerRemotingClients[i] = new NettyRemotingClient(producerClientConfig, this.remotingClientRuntime);
+            this.producerRemotingClients[i].start();
+            this.pullRemotingClients[i] = new NettyRemotingClient(pullClientConfig, this.remotingClientRuntime);
+            this.pullRemotingClients[i].start();
+        }
+        this.remotingClients = this.producerRemotingClients;
+        this.remotingClient = this.producerRemotingClients[0];
+        startUpstreamStatsLog();
+        this.initialized = true;
+        log.info("RocketMQStorageAdapter initialized: upstreamClientChannelPoolSize={}, upstreamClientAsyncSemaphoreValue={}, upstreamProducerAsyncSemaphoreValue={}, upstreamPullAsyncSemaphoreValue={}, upstreamClientKeepAliveIntervalSeconds={}, upstreamTlsEnabled={}",
+                poolSize, config.getUpstreamClientAsyncSemaphoreValue(),
+                config.getUpstreamProducerAsyncSemaphoreValue(), config.getUpstreamPullAsyncSemaphoreValue(),
+                config.getUpstreamClientKeepAliveIntervalSeconds(), config.isUpstreamTlsEnabled());
+    }
+
+    @Override
+    public void shutdown() {
+        if (this.upstreamStatsLogExecutor != null) {
+            this.upstreamStatsLogExecutor.shutdown();
+            this.upstreamStatsLogExecutor = null;
+        }
+        if (this.producerRemotingClients != null || this.pullRemotingClients != null) {
+            shutdownClients(this.producerRemotingClients);
+            shutdownClients(this.pullRemotingClients);
+            this.producerRemotingClients = null;
+            this.pullRemotingClients = null;
+            this.remotingClients = null;
+        } else if (this.remotingClient != null) {
+            this.remotingClient.shutdown();
+        }
+        if (this.remotingClientRuntime != null) {
+            this.remotingClientRuntime.shutdown();
+            this.remotingClientRuntime = null;
+        }
+        this.remotingClient = null;
+        this.initialized = false;
+    }
+
+    private void startUpstreamStatsLog() {
+        this.upstreamStatsLogExecutor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
+            private final AtomicInteger threadIndex = new AtomicInteger(0);
+
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "RocketMQStorageStatsLogger_" + threadIndex.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            }
+        });
+        this.upstreamStatsLogExecutor.scheduleAtFixedRate(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    log.info(buildUpstreamClientStatsLog());
+                } catch (Throwable throwable) {
+                    log.warn("Failed to log upstream client stats: {}", throwable.getMessage());
+                }
+            }
+        }, UPSTREAM_STATS_LOG_INTERVAL_SECONDS, UPSTREAM_STATS_LOG_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    }
+
+    String buildUpstreamClientStatsLog() {
+        StringBuilder builder = new StringBuilder("RocketMQStorageAdapter upstream client stats: ");
+        appendClientStats(builder, "producer", this.producerRemotingClients);
+        builder.append(", ");
+        appendClientStats(builder, "pull", this.pullRemotingClients);
+        return builder.toString();
+    }
+
+    private void appendClientStats(StringBuilder builder, String type, NettyRemotingClient[] clients) {
+        builder.append(type).append("=");
+        if (clients == null || clients.length == 0) {
+            builder.append("[]");
+            return;
+        }
+        builder.append("[");
+        for (int i = 0; i < clients.length; i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            NettyRemotingClient client = clients[i];
+            if (client == null) {
+                builder.append(type).append("[").append(i).append("]{null}");
+                continue;
+            }
+            builder.append(type).append("[").append(i).append("]{inFlight=")
+                    .append(client.getInFlightRequestCount())
+                    .append(", availablePermits=")
+                    .append(client.getAsyncSemaphoreAvailablePermits())
+                    .append(", limit=")
+                    .append(client.getAsyncSemaphoreLimit())
+                    .append("}");
+        }
+        builder.append("]");
+    }
+
+    private NettyClientConfig createNettyClientConfig(StorageConfig config, int asyncSemaphoreValue, int poolSize) {
         NettyClientConfig clientConfig = new NettyClientConfig();
         clientConfig.setNamesrvAddr(config.getNamesrvAddr());
         clientConfig.setConnectTimeoutMillis(config.getConnectTimeoutMillis());
-        clientConfig.setClientAsyncSemaphoreValue(Math.max(1,
-                (config.getUpstreamClientAsyncSemaphoreValue() + poolSize - 1) / poolSize));
+        clientConfig.setClientAsyncSemaphoreValue(Math.max(1, (asyncSemaphoreValue + poolSize - 1) / poolSize));
         clientConfig.setClientKeepAliveIntervalSeconds(config.getUpstreamClientKeepAliveIntervalSeconds());
         clientConfig.setClientKeepAliveRequestCode(RequestCode.CHECK_CLIENT_CONFIG);
 
@@ -69,37 +184,18 @@ public class RocketMQStorageAdapter implements StorageAdapter {
                     config.getUpstreamTlsClientKeyPath());
         }
 
-        this.remotingClientRuntime = new NettyClientRuntime(clientConfig, "RocketMQStorageClient");
-        this.remotingClients = new NettyRemotingClient[poolSize];
-        for (int i = 0; i < poolSize; i++) {
-            this.remotingClients[i] = new NettyRemotingClient(clientConfig, this.remotingClientRuntime);
-            this.remotingClients[i].start();
-        }
-        this.remotingClient = this.remotingClients[0];
-        this.initialized = true;
-        log.info("RocketMQStorageAdapter initialized: upstreamClientChannelPoolSize={}, upstreamClientAsyncSemaphoreValue={}, upstreamClientKeepAliveIntervalSeconds={}, upstreamTlsEnabled={}",
-                poolSize, config.getUpstreamClientAsyncSemaphoreValue(),
-                config.getUpstreamClientKeepAliveIntervalSeconds(), config.isUpstreamTlsEnabled());
+        return clientConfig;
     }
 
-    @Override
-    public void shutdown() {
-        if (this.remotingClients != null) {
-            for (NettyRemotingClient client : this.remotingClients) {
-                if (client != null) {
-                    client.shutdown();
-                }
+    private void shutdownClients(NettyRemotingClient[] clients) {
+        if (clients == null) {
+            return;
+        }
+        for (NettyRemotingClient client : clients) {
+            if (client != null) {
+                client.shutdown();
             }
-            this.remotingClients = null;
-        } else if (this.remotingClient != null) {
-            this.remotingClient.shutdown();
         }
-        if (this.remotingClientRuntime != null) {
-            this.remotingClientRuntime.shutdown();
-            this.remotingClientRuntime = null;
-        }
-        this.remotingClient = null;
-        this.initialized = false;
     }
 
     @Override
@@ -107,7 +203,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         checkInitialized();
         RemotingCommand request = createSendMessageRequest(message);
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS);
+        RemotingCommand response = selectProducerRemotingClient().invokeSync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS);
         return processPutMessageResponse(response);
     }
 
@@ -134,7 +230,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
             checkInitialized();
             final RemotingCommand request = createSendMessageRequest(message);
             final String targetAddr = resolveBrokerAddr(brokerAddr);
-            selectRemotingClient().invokeAsync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS,
+            selectProducerRemotingClient().invokeAsync(targetAddr, request, DEFAULT_REQUEST_TIMEOUT_MILLIS,
                     new InvokeCallback() {
                         @Override
                         public void operationSucceed(RemotingCommand response) {
@@ -202,7 +298,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         log.debug("pullMessage request to broker: targetAddr={}, group={}, topic={}, queueId={}, queueOffset={}, maxMsgNums={}, sysFlag={}, commitOffset={}, suspendTimeoutMillis={}, timeoutMillis={}, subscription={}, expressionType={}, subVersion={}",
                 targetAddr, consumerGroup, topic, queueId, queueOffset, maxMsgNums, requestContext.finalSysFlag,
                 commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription, requestContext.expressionType, subVersion);
-        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, requestContext.request, timeoutMillis);
+        RemotingCommand response = selectPullRemotingClient().invokeSync(targetAddr, requestContext.request, timeoutMillis);
         return processPullResponse(targetAddr, consumerGroup, topic, queueId, queueOffset, response);
     }
 
@@ -223,7 +319,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
                 commitOffset, suspendTimeoutMillis, timeoutMillis, requestContext.subscription,
                 requestContext.expressionType, subVersion);
 
-        selectRemotingClient().invokeAsync(targetAddr, requestContext.request, timeoutMillis, new InvokeCallback() {
+        selectPullRemotingClient().invokeAsync(targetAddr, requestContext.request, timeoutMillis, new InvokeCallback() {
             @Override
             public void operationSucceed(RemotingCommand response) {
                 try {
@@ -252,7 +348,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectProducerRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             long offset = response.getExtFields() != null && response.getExtFields().get("offset") != null
@@ -276,7 +372,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectRemotingClient().invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectProducerRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
             throw new RuntimeException("updateConsumerOffset failed, code: " + response.getCode() + ", remark: " + response.getRemark());
@@ -299,7 +395,25 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         forwardRequest.setFlag(request.getFlag());
         forwardRequest.setRemark(request.getRemark());
 
-        return selectRemotingClient().invokeSync(targetAddr, forwardRequest, 3000);
+        return selectProducerRemotingClient().invokeSync(targetAddr, forwardRequest, 3000);
+    }
+
+    private NettyRemotingClient selectProducerRemotingClient() {
+        if (this.producerRemotingClients != null && this.producerRemotingClients.length > 0) {
+            int index = Math.floorMod(this.producerRemotingClientSelector.getAndIncrement(),
+                    this.producerRemotingClients.length);
+            return this.producerRemotingClients[index];
+        }
+        return selectRemotingClient();
+    }
+
+    private NettyRemotingClient selectPullRemotingClient() {
+        if (this.pullRemotingClients != null && this.pullRemotingClients.length > 0) {
+            int index = Math.floorMod(this.pullRemotingClientSelector.getAndIncrement(),
+                    this.pullRemotingClients.length);
+            return this.pullRemotingClients[index];
+        }
+        return selectRemotingClient();
     }
 
     private NettyRemotingClient selectRemotingClient() {

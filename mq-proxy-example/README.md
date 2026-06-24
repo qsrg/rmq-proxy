@@ -306,13 +306,15 @@ proxy.workerThreadNums=8
 proxy.requestProcessorThreadNums=16
 proxy.pullExecutorThreadNums=32
 proxy.upstreamClientAsyncSemaphoreValue=4096
+proxy.upstreamProducerAsyncSemaphoreValue=4096
+proxy.upstreamPullAsyncSemaphoreValue=4096
 proxy.upstreamClientChannelPoolSize=4
 proxy.upstreamClientKeepAliveIntervalSeconds=30
 ```
 
 `SEND_MESSAGE` 使用异步方式转发到 broker，只有 broker 返回最终结果后 Proxy 才向客户端返回成功或失败，因此不会改变客户端同步发送、同步刷盘和同步复制语义。`proxy.requestProcessorThreadNums` 只负责请求解析和发起上游调用，不再同步等待 broker，可以保持在 `CPU 核心数 x 2` 左右。
 
-Proxy 到 broker 的异步在途请求由 `proxy.upstreamClientAsyncSemaphoreValue` 限制，默认 `4096`。压测时如果出现异步并发额度耗尽，应结合 Proxy 内存、broker RT 和客户端超时调整该值，避免无限堆积。
+Proxy 到 broker 的异步在途请求由 semaphore 限制。`proxy.upstreamProducerAsyncSemaphoreValue` 控制生产请求，`proxy.upstreamPullAsyncSemaphoreValue` 控制 Pull 长轮询请求；旧配置 `proxy.upstreamClientAsyncSemaphoreValue` 仍兼容，未配置专用值时作为两者默认值。压测时如果出现异步并发额度耗尽，应结合 Proxy 内存、broker RT、长轮询超时和客户端超时分别调整，避免无限堆积。
 
 需要临时调整请求处理线程时，可以不改配置文件：
 

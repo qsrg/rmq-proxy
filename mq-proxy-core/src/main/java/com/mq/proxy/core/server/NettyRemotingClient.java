@@ -495,6 +495,18 @@ public class NettyRemotingClient {
         return this.nettyClientConfig.getNamesrvAddr();
     }
 
+    public int getInFlightRequestCount() {
+        return this.responseTable.size();
+    }
+
+    public int getAsyncSemaphoreAvailablePermits() {
+        return this.semaphoreAsync.availablePermits();
+    }
+
+    public int getAsyncSemaphoreLimit() {
+        return Math.max(1, this.nettyClientConfig.getClientAsyncSemaphoreValue());
+    }
+
     public void registerProcessor(int requestCode, RemotingProcessor processor) {
         this.processorTable.put(requestCode, processor);
     }

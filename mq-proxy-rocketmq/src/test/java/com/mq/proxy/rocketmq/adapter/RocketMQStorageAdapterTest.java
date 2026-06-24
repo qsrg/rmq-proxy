@@ -148,14 +148,64 @@ public class RocketMQStorageAdapterTest {
     }
 
     @Test
+    public void testPutAndPullAsyncUseDedicatedRemotingClientPools() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        CountingAsyncRemotingClient producerClient = new CountingAsyncRemotingClient(createPutSuccessResponse("async-msg-1", 1, 500L));
+        CountingAsyncRemotingClient pullClient = new CountingAsyncRemotingClient(createPullNotFoundResponse(2L, 0L, 2L));
+        setField(adapter, "initialized", true);
+        setField(adapter, "producerRemotingClients", new NettyRemotingClient[]{producerClient});
+        setField(adapter, "pullRemotingClients", new NettyRemotingClient[]{pullClient});
+
+        InternalMessage message = new InternalMessage();
+        message.setProducerGroup("producer-group");
+        message.setTopic("AsyncTopic");
+        message.setQueueId(1);
+        message.setBody("async body".getBytes());
+
+        adapter.pullMessageAsync("CID_TEST", "TestTopic", 0, 2L, 32, 0, 2L,
+                15000L, "*", "TAG", 0L, "127.0.0.1:10911", new PullMessageCallback() {
+                    @Override
+                    public void onSuccess(PullResult pullResult) {
+                    }
+
+                    @Override
+                    public void onException(Throwable throwable) {
+                    }
+                });
+        adapter.putMessageAsync(message, "127.0.0.1:10911", new PutMessageCallback() {
+            @Override
+            public void onSuccess(PutResult putResult) {
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+            }
+        });
+
+        assertEquals(1, producerClient.invokeCount);
+        assertEquals(1, pullClient.invokeCount);
+    }
+
+    @Test
+    public void testBuildUpstreamClientStatsLogSeparatesProducerAndPullPools() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        setField(adapter, "producerRemotingClients", new NettyRemotingClient[]{
+                new StatsRemotingClient(10, 90, 100)
+        });
+        setField(adapter, "pullRemotingClients", new NettyRemotingClient[]{
+                new StatsRemotingClient(20, 80, 100)
+        });
+
+        String stats = adapter.buildUpstreamClientStatsLog();
+
+        assertTrue(stats.contains("producer[0]{inFlight=10, availablePermits=90, limit=100}"));
+        assertTrue(stats.contains("pull[0]{inFlight=20, availablePermits=80, limit=100}"));
+    }
+
+    @Test
     public void testPutMessageAsyncReturnsBrokerResult() throws Exception {
         RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
-        RemotingCommand response = RemotingCommand.createResponseCommand(0);
-        HashMap<String, String> extFields = new HashMap<>();
-        extFields.put("msgId", "async-msg-1");
-        extFields.put("queueId", "1");
-        extFields.put("queueOffset", "500");
-        response.setExtFields(extFields);
+        RemotingCommand response = createPutSuccessResponse("async-msg-1", 1, 500L);
         setField(adapter, "initialized", true);
         setField(adapter, "remotingClient", new AsyncFixedResponseRemotingClient(response));
 
@@ -184,6 +234,16 @@ public class RocketMQStorageAdapterTest {
         assertEquals("async-msg-1", callbackResult.get().getMsgId());
         assertEquals(1, callbackResult.get().getQueueId());
         assertEquals(500L, callbackResult.get().getQueueOffset());
+    }
+
+    private static RemotingCommand createPutSuccessResponse(String msgId, int queueId, long queueOffset) {
+        RemotingCommand response = RemotingCommand.createResponseCommand(0);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("msgId", msgId);
+        extFields.put("queueId", String.valueOf(queueId));
+        extFields.put("queueOffset", String.valueOf(queueOffset));
+        response.setExtFields(extFields);
+        return response;
     }
 
     private static RemotingCommand createPullNotFoundResponse(long nextBeginOffset, long minOffset, long maxOffset) {
@@ -278,6 +338,34 @@ public class RocketMQStorageAdapterTest {
         public void invokeAsync(String addr, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback) {
             this.invokeCount++;
             super.invokeAsync(addr, request, timeoutMillis, invokeCallback);
+        }
+    }
+
+    private static class StatsRemotingClient extends AsyncFixedResponseRemotingClient {
+        private final int inFlightRequestCount;
+        private final int availablePermits;
+        private final int semaphoreLimit;
+
+        StatsRemotingClient(int inFlightRequestCount, int availablePermits, int semaphoreLimit) {
+            super(createPullNotFoundResponse(0L, 0L, 0L));
+            this.inFlightRequestCount = inFlightRequestCount;
+            this.availablePermits = availablePermits;
+            this.semaphoreLimit = semaphoreLimit;
+        }
+
+        @Override
+        public int getInFlightRequestCount() {
+            return inFlightRequestCount;
+        }
+
+        @Override
+        public int getAsyncSemaphoreAvailablePermits() {
+            return availablePermits;
+        }
+
+        @Override
+        public int getAsyncSemaphoreLimit() {
+            return semaphoreLimit;
         }
     }
 }

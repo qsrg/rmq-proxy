@@ -4,6 +4,8 @@ public class StorageConfig {
     private String namesrvAddr;
     private int connectTimeoutMillis = 3000;
     private int upstreamClientAsyncSemaphoreValue = 4096;
+    private int upstreamProducerAsyncSemaphoreValue = 4096;
+    private int upstreamPullAsyncSemaphoreValue = 4096;
     private int upstreamClientChannelPoolSize = 4;
     private int upstreamClientKeepAliveIntervalSeconds = 30;
 
@@ -40,6 +42,24 @@ public class StorageConfig {
 
     public void setUpstreamClientAsyncSemaphoreValue(int upstreamClientAsyncSemaphoreValue) {
         this.upstreamClientAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+        this.upstreamProducerAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+        this.upstreamPullAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+    }
+
+    public int getUpstreamProducerAsyncSemaphoreValue() {
+        return upstreamProducerAsyncSemaphoreValue;
+    }
+
+    public void setUpstreamProducerAsyncSemaphoreValue(int upstreamProducerAsyncSemaphoreValue) {
+        this.upstreamProducerAsyncSemaphoreValue = upstreamProducerAsyncSemaphoreValue;
+    }
+
+    public int getUpstreamPullAsyncSemaphoreValue() {
+        return upstreamPullAsyncSemaphoreValue;
+    }
+
+    public void setUpstreamPullAsyncSemaphoreValue(int upstreamPullAsyncSemaphoreValue) {
+        this.upstreamPullAsyncSemaphoreValue = upstreamPullAsyncSemaphoreValue;
     }
 
     public int getUpstreamClientChannelPoolSize() {

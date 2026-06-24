@@ -67,6 +67,32 @@ public class ProxyConfigLoaderTest {
     }
 
     @Test
+    public void shouldUseLegacyUpstreamSemaphoreForProducerAndPullWhenDedicatedValuesAreAbsent() {
+        Properties props = new Properties();
+        props.setProperty("proxy.upstreamClientAsyncSemaphoreValue", "512");
+
+        ProxyConfig config = ProxyConfigLoader.loadFromProperties(props);
+
+        assertEquals(512, config.getUpstreamClientAsyncSemaphoreValue());
+        assertEquals(512, config.getUpstreamProducerAsyncSemaphoreValue());
+        assertEquals(512, config.getUpstreamPullAsyncSemaphoreValue());
+    }
+
+    @Test
+    public void shouldLoadDedicatedUpstreamSemaphoreLimitsFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("proxy.upstreamClientAsyncSemaphoreValue", "512");
+        props.setProperty("proxy.upstreamProducerAsyncSemaphoreValue", "128");
+        props.setProperty("proxy.upstreamPullAsyncSemaphoreValue", "2048");
+
+        ProxyConfig config = ProxyConfigLoader.loadFromProperties(props);
+
+        assertEquals(512, config.getUpstreamClientAsyncSemaphoreValue());
+        assertEquals(128, config.getUpstreamProducerAsyncSemaphoreValue());
+        assertEquals(2048, config.getUpstreamPullAsyncSemaphoreValue());
+    }
+
+    @Test
     public void shouldLoadDownstreamTlsConfigFromCanonicalProperties() {
         Properties props = new Properties();
         props.setProperty("proxy.downstream.tls.enabled", "true");

@@ -13,6 +13,8 @@ public class ProxyConfig {
     private int pullExecutorThreadNums = Math.max(32, Runtime.getRuntime().availableProcessors() * 4);
     private long routeCacheExpireMillis = 30000;
     private int upstreamClientAsyncSemaphoreValue = 4096;
+    private int upstreamProducerAsyncSemaphoreValue = 4096;
+    private int upstreamPullAsyncSemaphoreValue = 4096;
     private int upstreamClientChannelPoolSize = 4;
     private int upstreamClientKeepAliveIntervalSeconds = 30;
 
@@ -116,6 +118,24 @@ public class ProxyConfig {
 
     public void setUpstreamClientAsyncSemaphoreValue(int upstreamClientAsyncSemaphoreValue) {
         this.upstreamClientAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+        this.upstreamProducerAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+        this.upstreamPullAsyncSemaphoreValue = upstreamClientAsyncSemaphoreValue;
+    }
+
+    public int getUpstreamProducerAsyncSemaphoreValue() {
+        return upstreamProducerAsyncSemaphoreValue;
+    }
+
+    public void setUpstreamProducerAsyncSemaphoreValue(int upstreamProducerAsyncSemaphoreValue) {
+        this.upstreamProducerAsyncSemaphoreValue = upstreamProducerAsyncSemaphoreValue;
+    }
+
+    public int getUpstreamPullAsyncSemaphoreValue() {
+        return upstreamPullAsyncSemaphoreValue;
+    }
+
+    public void setUpstreamPullAsyncSemaphoreValue(int upstreamPullAsyncSemaphoreValue) {
+        this.upstreamPullAsyncSemaphoreValue = upstreamPullAsyncSemaphoreValue;
     }
 
     public int getUpstreamClientChannelPoolSize() {

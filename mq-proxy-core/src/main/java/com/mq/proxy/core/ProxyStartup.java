@@ -171,6 +171,8 @@ public class ProxyStartup {
             storageConfig.setNamesrvAddr(proxyConfig.getNamesrvAddr());
             storageConfig.setConnectTimeoutMillis(proxyConfig.getConnectTimeoutMillis());
             storageConfig.setUpstreamClientAsyncSemaphoreValue(proxyConfig.getUpstreamClientAsyncSemaphoreValue());
+            storageConfig.setUpstreamProducerAsyncSemaphoreValue(proxyConfig.getUpstreamProducerAsyncSemaphoreValue());
+            storageConfig.setUpstreamPullAsyncSemaphoreValue(proxyConfig.getUpstreamPullAsyncSemaphoreValue());
             storageConfig.setUpstreamClientChannelPoolSize(proxyConfig.getUpstreamClientChannelPoolSize());
             storageConfig.setUpstreamClientKeepAliveIntervalSeconds(proxyConfig.getUpstreamClientKeepAliveIntervalSeconds());
 
@@ -256,6 +258,18 @@ public class ProxyStartup {
             config.setUpstreamClientAsyncSemaphoreValue(Integer.parseInt(upstreamClientAsyncSemaphoreValue));
             log.info("Override upstreamClientAsyncSemaphoreValue from system property: {}",
                     upstreamClientAsyncSemaphoreValue);
+        }
+        String upstreamProducerAsyncSemaphoreValue = System.getProperty("proxy.upstreamProducerAsyncSemaphoreValue");
+        if (upstreamProducerAsyncSemaphoreValue != null && !upstreamProducerAsyncSemaphoreValue.isEmpty()) {
+            config.setUpstreamProducerAsyncSemaphoreValue(Integer.parseInt(upstreamProducerAsyncSemaphoreValue));
+            log.info("Override upstreamProducerAsyncSemaphoreValue from system property: {}",
+                    upstreamProducerAsyncSemaphoreValue);
+        }
+        String upstreamPullAsyncSemaphoreValue = System.getProperty("proxy.upstreamPullAsyncSemaphoreValue");
+        if (upstreamPullAsyncSemaphoreValue != null && !upstreamPullAsyncSemaphoreValue.isEmpty()) {
+            config.setUpstreamPullAsyncSemaphoreValue(Integer.parseInt(upstreamPullAsyncSemaphoreValue));
+            log.info("Override upstreamPullAsyncSemaphoreValue from system property: {}",
+                    upstreamPullAsyncSemaphoreValue);
         }
         String upstreamClientChannelPoolSize = System.getProperty("proxy.upstreamClientChannelPoolSize");
         if (upstreamClientChannelPoolSize != null && !upstreamClientChannelPoolSize.isEmpty()) {
