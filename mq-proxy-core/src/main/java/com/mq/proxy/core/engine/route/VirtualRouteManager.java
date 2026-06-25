@@ -71,6 +71,11 @@ public class VirtualRouteManager {
             return cached;
         }
 
+        return refreshRouteInfoByTopic(topic);
+    }
+
+    public TopicRouteInfo refreshRouteInfoByTopic(String topic) {
+        TopicRouteInfo cached = this.routeCache.get(topic);
         TopicRouteInfo realRoute = fetchRouteFromNameServer(topic);
         if (realRoute == null) {
             return cached;
@@ -269,6 +274,26 @@ public class VirtualRouteManager {
         virtualRoute.setQueueDatas(realRoute.getQueueDatas());
         virtualRoute.setFilterServerTable(realRoute.getFilterServerTable());
 
+        Set<String> brokerNamesToRefresh = new LinkedHashSet<>();
+        TopicRouteInfo cachedRoute = this.routeCache.get(topic);
+        if (cachedRoute != null && cachedRoute.getBrokerDatas() != null) {
+            for (TopicRouteInfo.BrokerData brokerData : cachedRoute.getBrokerDatas()) {
+                if (brokerData.getBrokerName() != null) {
+                    brokerNamesToRefresh.add(brokerData.getBrokerName());
+                }
+            }
+        }
+        if (realRoute.getBrokerDatas() != null) {
+            for (TopicRouteInfo.BrokerData brokerData : realRoute.getBrokerDatas()) {
+                if (brokerData.getBrokerName() != null) {
+                    brokerNamesToRefresh.add(brokerData.getBrokerName());
+                }
+            }
+        }
+        for (String brokerName : brokerNamesToRefresh) {
+            clearBrokerAddrMapping(brokerName);
+        }
+
         java.util.List<TopicRouteInfo.BrokerData> virtualBrokerDatas = new java.util.ArrayList<>();
         for (TopicRouteInfo.BrokerData brokerData : realRoute.getBrokerDatas()) {
             String brokerName = brokerData.getBrokerName();
@@ -302,5 +327,15 @@ public class VirtualRouteManager {
         virtualRoute.setBrokerDatas(virtualBrokerDatas);
 
         return virtualRoute;
+    }
+
+    private void clearBrokerAddrMapping(String brokerName) {
+        this.brokerNameToRealAddr.remove(brokerName);
+        String keyPrefix = brokerName + ":";
+        for (String key : this.brokerNameAndIdToRealAddr.keySet()) {
+            if (key.startsWith(keyPrefix)) {
+                this.brokerNameAndIdToRealAddr.remove(key);
+            }
+        }
     }
 }

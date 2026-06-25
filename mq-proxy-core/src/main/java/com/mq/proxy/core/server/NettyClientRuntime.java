@@ -106,6 +106,22 @@ public class NettyClientRuntime {
         return callbackExecutor;
     }
 
+    public int getCallbackExecutorActiveCount() {
+        ExecutorService executor = this.callbackExecutor;
+        if (executor instanceof ThreadPoolExecutor) {
+            return ((ThreadPoolExecutor) executor).getActiveCount();
+        }
+        return 0;
+    }
+
+    public int getCallbackExecutorQueueSize() {
+        ExecutorService executor = this.callbackExecutor;
+        if (executor instanceof ThreadPoolExecutor) {
+            return ((ThreadPoolExecutor) executor).getQueue().size();
+        }
+        return 0;
+    }
+
     public ScheduledExecutorService getResponseTableScanExecutor() {
         return responseTableScanExecutor;
     }

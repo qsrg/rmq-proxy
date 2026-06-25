@@ -1,5 +1,7 @@
 # MQ代理系统设计文档
 
+> 说明：本文是 2026-04-28 的早期整体设计，保留用于理解项目演进。当前主干以原生 RocketMQ 客户端透明代理为主，不包含独立 `mq-proxy-sdk` 模块；本文中的 proxy-SDK、管理控制台和部分模块规划不代表当前代码结构。
+
 ## 1. 概述
 
 ### 1.1 背景
@@ -1141,6 +1143,8 @@ Java 8（符合项目要求）
 
 ### 8.3 项目模块划分
 
+早期规划如下，包含未落地的 SDK、管理控制台和自研 MQ 适配器方向：
+
 ```
 mq-proxy-system/
 ├── mq-proxy-core/          # 核心引擎
@@ -1154,14 +1158,25 @@ mq-proxy-system/
 └── mq-proxy-admin/         # 管理控制台
 ```
 
+当前主干实际保留的模块为：
+
+```
+mq-proxy-system/
+├── mq-proxy-core/          # 核心协议、路由、连接管理和存储抽象
+├── mq-proxy-rocketmq/      # RocketMQ 适配器
+├── mq-proxy-mock/          # Mock 适配器（测试/开发）
+├── mq-proxy-admin/         # 管理模块占位
+├── mq-proxy-standalone/    # 可运行打包模块
+└── mq-proxy-example/       # 原生 RocketMQ 客户端示例和压测工具
+```
+
 ---
 
 ## 9. 下一步行动
 
-1. 创建项目骨架，搭建基础模块结构
-2. 实现RocketMQ 4.9协议解析层
-3. 实现RocketMQ适配器（对接真实RocketMQ）
-4. 实现Mock适配器（用于测试验证）
-5. 实现proxy-SDK基础框架
-6. 完成监控埋点和告警配置
-7. 编写集成测试，验证协议兼容性
+1. 完善 RocketMQ 4.9 原生协议覆盖，优先保证生产、Push 消费、顺序消费、offset 和队列锁语义。
+2. 持续强化消费者代理链路，确保心跳、rebalance 触发、Broker 反向请求和连接失效清理符合原生客户端预期。
+3. 完善 `mq-proxy-standalone` 的部署、TLS、日志和运行参数文档。
+4. 保持 `mq-proxy-example` 与当前代码同步，用原生 RocketMQ 客户端示例验证透明代理能力。
+5. 将后续轻 SDK 和存储计算分离方向放入独立设计文档，不再混入当前透明代理模块说明。
+6. 编写集成测试，验证协议兼容性。

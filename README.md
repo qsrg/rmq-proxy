@@ -1,136 +1,126 @@
 # MQ Proxy
 
-基于 Netty 的 RocketMQ 透明代理系统，在客户端与 RocketMQ 集群之间提供协议代理、路由虚拟化、可插拔存储后端等能力。
+MQ Proxy 是一个基于 Netty 的 RocketMQ 透明代理。原生 RocketMQ 客户端只需要把 `namesrvAddr` 指向 Proxy，Proxy 会代理 NameServer 路由查询、客户端心跳、生产、消费、offset、队列锁等 RocketMQ remoting 请求，并将请求转发到真实 RocketMQ Broker 集群。
+
+当前主干以 RocketMQ 4.9.8 原生客户端透明接入为核心目标，不包含独立 `mq-proxy-sdk` 模块。
 
 ## 架构概览
 
-MQ Proxy 支持两种接入方式：
+```text
+RocketMQ Client
+      |
+      | namesrvAddr = proxy.host:proxy.listenPort
+      v
+MQ Proxy
+  - NettyRemotingServer: 接收原生 RocketMQ remoting 请求
+  - VirtualRouteManager: 查询真实 NameServer 并返回指向 Proxy 的虚拟路由
+  - MessageEngine: 解析 brokerName/topic/queueId 并选择真实 Broker
+  - RocketMQStorageAdapter: 通过原生 remoting 协议转发到 Broker
+      |
+      v
+RocketMQ NameServer / Broker
+```
 
-1. **透明代理模式** — 原生 RocketMQ 客户端只需将 `namesrvAddr` 设为代理地址，代理拦截所有协议请求并通过 `StorageAdapter` 转发至真实 Broker
-2. **SDK 模式** — 应用使用 `ProxyClient` SDK 直连代理，自带连接管理、重试、故障隔离、指标采集与链路追踪
-
-核心扩展点为 `StorageAdapter` SPI：通过 Java ServiceLoader 注册新的存储后端（RocketMQ、Mock、或自定义），支持按 Topic 路由到不同适配器。
+Proxy 会监听配置端口和 RocketMQ VIP 端口（`proxy.listenPort - 2`）。例如 `proxy.listenPort=19876` 时，客户端可能连接 `19876` 或 `19874`。
 
 ## 模块介绍
 
 ### mq-proxy-core
 
-核心模块，包含协议编解码、Netty 服务器/客户端、请求分发引擎、路由虚拟化与存储抽象层。
+核心模块，包含协议编解码、Netty 服务端/客户端、请求分发、路由虚拟化、客户端连接管理与存储抽象。
 
 | 关键类 | 说明 |
 |--------|------|
-| `ProxyStartup` | 启动入口，组装所有组件 |
-| `ProxyConfig` / `ProxyConfigLoader` | 代理配置及加载 |
-| `RemotingCommand` / `RemotingCommandEncoder` / `RemotingCommandDecoder` | RocketMQ 协议帧的编解码 |
-| `NettyRemotingServer` | Netty TCP 服务器，管理 Channel 与 Processor 注册 |
-| `NettyRemotingClient` | 内部 Netty 客户端，用于转发请求到真实 Broker |
-| `MessageEngine` | 中央调度：按 Topic 将请求路由到对应 `StorageAdapter` |
-| `ProcessorRegister` | 注册所有请求处理器 |
-| `NameServerProcessor` | 处理路由查询，返回虚拟化路由（代理地址替代真实 Broker 地址） |
-| `SendMessageProcessor` / `PullMessageProcessor` / `ConsumerManageProcessor` | 消息发送、拉取、消费偏移量处理器 |
-| `ClientManageProcessor` | 心跳、客户端注销、消费者列表变更通知与重平衡 |
-| `VirtualRouteManager` | 查询真实 NameServer 路由并缓存，生成指向代理的虚拟路由 |
-| `ClientConnectionManager` | 管理连接端的生产者/消费者元数据、心跳与过期检测 |
-| `StorageAdapter` | 可插拔存储接口（SPI 扩展点） |
-| `StorageAdapterManager` | 通过 ServiceLoader 发现适配器并按 Topic 路由 |
-
-**外部依赖**：Netty、SLF4J、Logback、Jackson
+| `ProxyStartup` | 启动入口，加载配置并组装核心组件 |
+| `ProxyConfig` / `ProxyConfigLoader` | Proxy 配置对象与加载逻辑 |
+| `RemotingCommand` / `RemotingCommandEncoder` / `RemotingCommandDecoder` | RocketMQ remoting 协议帧编解码 |
+| `NettyRemotingServer` | 面向 RocketMQ 客户端的 Netty 服务端 |
+| `NettyRemotingClient` | Proxy 内部到 Broker 的 Netty 客户端 |
+| `VirtualRouteManager` | 查询真实 NameServer 路由并生成指向 Proxy 的虚拟路由 |
+| `MessageEngine` | 根据请求中的 topic、brokerName、queueId 解析真实 Broker 并调用 `StorageAdapter` |
+| `ProcessorRegister` | 注册 NameServer、生产、消费、客户端管理等请求处理器 |
+| `ClientConnectionManager` | 管理下游客户端连接、生产者/消费者元数据和连接失效清理 |
+| `ProxyBrokerHeartbeatService` | 将下游客户端心跳汇总并转发给 Broker |
+| `StorageAdapter` | 存储后端抽象接口 |
 
 ### mq-proxy-rocketmq
 
-RocketMQ 存储适配器实现，通过 `NettyRemotingClient` 以原生 RemotingCommand 协议转发请求到真实 Broker。
-
-| 关键类 | 说明 |
-|--------|------|
-| `RocketMQStorageAdapter` | 实现 `StorageAdapter`，构造 RemotingCommand 请求转发到 Broker 并翻译响应 |
-| `RocketMQMessageDecoder` | 从 RocketMQ 二进制格式反序列化消息为 `InternalMessage` |
-
-**模块依赖**：mq-proxy-core
+RocketMQ 存储适配器实现。`RocketMQStorageAdapter` 负责把 Proxy 内部请求转换为 RocketMQ remoting 请求，并转发到真实 Broker。
 
 ### mq-proxy-mock
 
-内存 Mock 存储适配器，用于测试和开发，无需真实 Broker。
-
-| 关键类 | 说明 |
-|--------|------|
-| `MockStorageAdapter` | 基于 `ConcurrentHashMap` 的内存存储，支持消息写入/拉取与偏移量管理 |
-
-**模块依赖**：mq-proxy-core
-
-### mq-proxy-sdk
-
-独立 Java SDK，供客户端应用直接通过代理收发消息。内置重试、故障隔离（自动屏蔽失败地址）、指标采集、链路追踪与长轮询拉取。
-
-| 关键类 | 说明 |
-|--------|------|
-| `ProxyClient` | SDK 主入口，提供 `send`、`pull`、`queryConsumerOffset`、`updateConsumerOffset` 等方法 |
-| `ProxyClientConfig` | 配置代理地址列表、超时、重试次数、故障隔离时长、长轮询参数等 |
-| `ProxyClientFacade` | 编排 SDK 内部组件，实现重试与故障隔离逻辑 |
-| `ProxyAddressManager` | 代理地址轮询选择与故障隔离（失败地址临时屏蔽） |
-| `ProxyChannelManager` | 管理 Netty Channel 生命周期与空闲连接清理 |
-| `ProxyRemotingClient` | SDK 层 Netty 客户端，管理响应 Future 与服务端推送处理 |
-| `MetricsCollector` / `ProxyMetrics` | 按代理地址统计成功/失败数、成功率与平均延迟 |
-| `TraceCollector` / `TraceRecord` | 异步链路追踪（有界队列，最多 10000 条） |
-
-**模块依赖**：mq-proxy-core
+内存 Mock 存储适配器，主要用于单元测试和本地开发验证。
 
 ### mq-proxy-admin
 
-管理模块（占位），计划用于 HTTP API、JMX 或管理控制台，当前暂无实际代码。
-
-**模块依赖**：mq-proxy-core
+管理模块占位，目前仅保留包结构，尚未提供 HTTP API、JMX 或控制台能力。
 
 ### mq-proxy-standalone
 
-打包启动模块，将 core、rocketmq、mock 汇总为可执行 JAR，主类为 `com.mq.proxy.core.ProxyStartup`。
-
-**模块依赖**：mq-proxy-core、mq-proxy-rocketmq、mq-proxy-mock
-
-### mq-proxy-test
-
-端到端集成测试模块，使用原生 RocketMQ 客户端（不依赖任何 mq-proxy 模块）验证代理的透明性。
-
-| 关键类 | 说明 |
-|--------|------|
-| `RocketMQThroughPushProxyTest` | 生产者 + Push 消费者通过代理收发消息 |
-| `ConsumerTest` / `RocketMQPullConsumerTest` | Pull 消费者通过代理拉取消息 |
-
-**模块依赖**：无（仅使用原生 rocketmq-client）
+可运行打包模块，生成 `mq-proxy-${version}.jar` 和分发包 `mq-proxy-${version}.tar.gz`。主类为 `com.mq.proxy.core.ProxyStartup`，当前分发包包含 `mq-proxy-core` 和 `mq-proxy-rocketmq`。
 
 ### mq-proxy-example
 
-SDK 使用示例与基准测试，供开发者参考集成方式。
+原生 RocketMQ 客户端示例和压测工具，展示客户端如何通过 Proxy 接入 RocketMQ。
 
-| 关键类 | 说明 |
-|--------|------|
-| `ProxySDKProducerQuickStart` / `ProxySDKConsumerQuickStart` | SDK 快速入门 |
-| `ProducerConsumerQuickStart` | 生产者 + 消费者组合示例 |
-| `ComparisonExample` | Proxy SDK 与原生 RocketMQ 客户端对比演示 |
-| `SyncProducer` / `BatchProducer` / `MultiProxyProducer` | 同步发送、批量发送、多代理地址高可用示例 |
-| `PullConsumer` | Pull 消费示例 |
-| `BenchmarkProducer` | 性能基准测试 |
-
-**模块依赖**：mq-proxy-sdk
+| 示例 | 说明 |
+|------|------|
+| `RocketMQProducerQuickStart` | 原生生产者通过 Proxy 发送消息 |
+| `RocketMQConsumerQuickStart` | 原生 PushConsumer 通过 Proxy 消费消息 |
+| `OrderlyProducer` / `OrderlyConsumer` | 顺序消息生产与顺序消费示例 |
+| `RocketMQProxyBenchmark` | Proxy 与直连 NameServer 的压测对比工具 |
 
 ## 模块依赖关系
 
-```
-mq-proxy-core          （基础层，无兄弟模块依赖）
-  ├── mq-proxy-rocketmq   （存储适配器：RocketMQ）
-  ├── mq-proxy-mock       （存储适配器：内存 Mock）
-  ├── mq-proxy-sdk        （客户端 SDK）
-  ├── mq-proxy-admin      （管理，占位）
-  └── mq-proxy-standalone （打包启动 ← core + rocketmq + mock）
-         mq-proxy-example  （示例 ← sdk）
-         mq-proxy-test     （集成测试 ← 无代理模块依赖）
+```text
+mq-proxy-core
+  ├── mq-proxy-rocketmq
+  ├── mq-proxy-mock
+  └── mq-proxy-admin
+
+mq-proxy-standalone
+  ├── mq-proxy-core
+  └── mq-proxy-rocketmq
+
+mq-proxy-example
+  └── org.apache.rocketmq:rocketmq-client
 ```
 
 ## 快速启动
 
-1. 启动 NameServer 与 Broker（参考 CLAUDE.md）
-2. 配置 `proxy.conf`
-3. 运行 mq-proxy-standalone 生成的可执行 JAR
-4. 客户端将 `namesrvAddr` 设为代理地址即可透明接入
+1. 启动本机 RocketMQ NameServer 和 Broker，命令见 `AGENTS.md`。
+2. 打包 Proxy：
+
+   ```bash
+   mvn package -pl mq-proxy-standalone -am -DskipTests
+   ```
+
+3. 解压分发包并修改 `conf/proxy.properties`：
+
+   ```properties
+   proxy.listenPort=19876
+   proxy.host=127.0.0.1
+   proxy.namesrvAddr=127.0.0.1:9876
+   ```
+
+4. 启动 Proxy：
+
+   ```bash
+   sh bin/proxy.sh
+   ```
+
+5. 原生 RocketMQ 客户端将 `namesrvAddr` 配置为 Proxy 地址：
+
+   ```java
+   producer.setNamesrvAddr("127.0.0.1:19876");
+   consumer.setNamesrvAddr("127.0.0.1:19876");
+   ```
+
+## 常用文档
+
+- Standalone 打包、配置、TLS 与部署说明：[mq-proxy-standalone/README.md](mq-proxy-standalone/README.md)
+- 原生客户端示例与压测说明：[mq-proxy-example/README.md](mq-proxy-example/README.md)
+- 当前 docs 索引：[docs/README.md](docs/README.md)
 
 ## 技术栈
 
@@ -138,4 +128,5 @@ mq-proxy-core          （基础层，无兄弟模块依赖）
 - Netty 4.1.68
 - RocketMQ 4.9.8
 - Jackson 2.12.7
+- SLF4J 1.7.36
 - Logback 1.2.11

@@ -11,6 +11,7 @@ import com.mq.proxy.core.storage.StorageAdapter;
 import com.mq.proxy.core.storage.model.InternalMessage;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
+import org.mockito.ArgumentCaptor;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +32,8 @@ import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class MessageEngineTest {
@@ -117,6 +120,115 @@ public class MessageEngineTest {
         assertEquals(0L, callbackResult.get().getMinOffset());
         assertEquals(5L, callbackResult.get().getMaxOffset());
         assertEquals(RemotingSysResponseCode.SYSTEM_ERROR, callbackResult.get().getResponseCode());
+    }
+
+    @Test
+    public void testPullMessageUsesSuggestedBrokerIdAndClearsCommitOffsetForSlave() throws Exception {
+        StorageAdapter adapter = mock(StorageAdapter.class);
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        MessageEngine messageEngine = new MessageEngine(adapter);
+        messageEngine.setVirtualRouteManager(routeManager);
+
+        when(routeManager.getRealBrokerAddr("broker-a")).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 0L)).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 1L)).thenReturn("192.168.1.2:10911");
+
+        doAnswer(invocation -> {
+            PullResult result = PullResult.notFound(5L, 0L, 5L);
+            result.setSuggestWhichBrokerId("1");
+            return result;
+        }).when(adapter).pullMessage(eq("group-a"), eq("TopicA"), eq(0), eq(5L), eq(32),
+                anyInt(), eq(5L), eq(15000L), eq("*"), eq("TAG"), eq(123L), any());
+
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+
+        ArgumentCaptor<Integer> sysFlagCaptor = ArgumentCaptor.forClass(Integer.class);
+        ArgumentCaptor<String> brokerAddrCaptor = ArgumentCaptor.forClass(String.class);
+        verify(adapter, times(2)).pullMessage(eq("group-a"), eq("TopicA"), eq(0), eq(5L), eq(32),
+                sysFlagCaptor.capture(), eq(5L), eq(15000L), eq("*"), eq("TAG"), eq(123L),
+                brokerAddrCaptor.capture());
+
+        assertEquals("192.168.1.1:10911", brokerAddrCaptor.getAllValues().get(0));
+        assertEquals("192.168.1.2:10911", brokerAddrCaptor.getAllValues().get(1));
+        assertEquals(Integer.valueOf(3), sysFlagCaptor.getAllValues().get(0));
+        assertEquals(Integer.valueOf(2), sysFlagCaptor.getAllValues().get(1));
+    }
+
+    @Test
+    public void testPullMessageKeepsSuggestedSlaveWhenRouteRefreshFindsNewSlaveAddress() throws Exception {
+        StorageAdapter adapter = mock(StorageAdapter.class);
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        MessageEngine messageEngine = new MessageEngine(adapter);
+        messageEngine.setVirtualRouteManager(routeManager);
+
+        when(routeManager.getRealBrokerAddr("broker-a")).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 0L)).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 1L))
+                .thenReturn("192.168.1.2:10911", "192.168.1.3:10911", "192.168.1.3:10911");
+
+        doAnswer(invocation -> {
+            String brokerAddr = invocation.getArgument(11);
+            if ("192.168.1.2:10911".equals(brokerAddr)) {
+                throw new RuntimeException("old slave unavailable");
+            }
+            PullResult result = PullResult.notFound(5L, 0L, 5L);
+            result.setSuggestWhichBrokerId("1");
+            return result;
+        }).when(adapter).pullMessage(eq("group-a"), eq("TopicA"), eq(0), eq(5L), eq(32),
+                anyInt(), eq(5L), eq(15000L), eq("*"), eq("TAG"), eq(123L), any());
+
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+
+        ArgumentCaptor<String> brokerAddrCaptor = ArgumentCaptor.forClass(String.class);
+        verify(adapter, times(3)).pullMessage(eq("group-a"), eq("TopicA"), eq(0), eq(5L), eq(32),
+                anyInt(), eq(5L), eq(15000L), eq("*"), eq("TAG"), eq(123L),
+                brokerAddrCaptor.capture());
+
+        assertEquals("192.168.1.1:10911", brokerAddrCaptor.getAllValues().get(0));
+        assertEquals("192.168.1.2:10911", brokerAddrCaptor.getAllValues().get(1));
+        assertEquals("192.168.1.3:10911", brokerAddrCaptor.getAllValues().get(2));
+    }
+
+    @Test
+    public void testPullMessageThrottlesRouteRefreshOnRepeatedSlaveFailure() throws Exception {
+        StorageAdapter adapter = mock(StorageAdapter.class);
+        VirtualRouteManager routeManager = mock(VirtualRouteManager.class);
+        MessageEngine messageEngine = new MessageEngine(adapter);
+        messageEngine.setVirtualRouteManager(routeManager);
+
+        when(routeManager.getRealBrokerAddr("broker-a")).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 0L)).thenReturn("192.168.1.1:10911");
+        when(routeManager.getRealBrokerAddr("broker-a", 1L))
+                .thenReturn("192.168.1.2:10911", "192.168.1.3:10911",
+                        "192.168.1.3:10911", "192.168.1.3:10911");
+
+        doAnswer(invocation -> {
+            String brokerAddr = invocation.getArgument(11);
+            if (!"192.168.1.1:10911".equals(brokerAddr)) {
+                throw new RuntimeException("slave unavailable");
+            }
+            PullResult result = PullResult.notFound(5L, 0L, 5L);
+            result.setSuggestWhichBrokerId("1");
+            return result;
+        }).when(adapter).pullMessage(eq("group-a"), eq("TopicA"), eq(0), eq(5L), eq(32),
+                anyInt(), eq(5L), eq(15000L), eq("*"), eq("TAG"), eq(123L), any());
+
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+        messageEngine.pullMessage("group-a", "TopicA", 0, 5L, 32,
+                3, 5L, 15000L, "*", "TAG", 123L, "broker-a");
+
+        verify(routeManager, times(1)).refreshRouteInfoByTopic("TopicA");
     }
 
     @Test

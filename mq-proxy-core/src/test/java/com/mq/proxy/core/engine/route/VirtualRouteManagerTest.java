@@ -121,6 +121,22 @@ public class VirtualRouteManagerTest {
     }
 
     @Test
+    public void testConvertToVirtualRouteRemovesStaleSlaveAddressForBroker() throws Exception {
+        TopicRouteInfo firstRoute = createRoute("TestTopic", "broker-a", "192.168.1.1:10911");
+        Map<Long, String> firstAddrs = firstRoute.getBrokerDatas().get(0).getBrokerAddrs();
+        firstAddrs.put(1L, "192.168.1.2:10911");
+
+        TopicRouteInfo secondRoute = createRoute("TestTopic", "broker-a", "192.168.1.3:10911");
+
+        setProxyAddr("10.0.0.1:8080");
+        routeManager.convertToVirtualRoute(firstRoute, "TestTopic");
+        routeManager.convertToVirtualRoute(secondRoute, "TestTopic");
+
+        assertEquals("192.168.1.3:10911", routeManager.getRealBrokerAddr("broker-a"));
+        assertEquals("192.168.1.3:10911", routeManager.getRealBrokerAddr("broker-a", 1L));
+    }
+
+    @Test
     public void testRouteCacheMechanism() throws Exception {
         Field routeCacheField = VirtualRouteManager.class.getDeclaredField("routeCache");
         routeCacheField.setAccessible(true);

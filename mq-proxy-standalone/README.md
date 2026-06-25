@@ -14,13 +14,13 @@ mvn package -pl mq-proxy-standalone -am -DskipTests
 
 生成文件：
 - `target/mq-proxy/` — 可直接运行的目录
-- `target/mq-proxy-1.0.0-SNAPSHOT.tar.gz` — 分发包
+- `target/mq-proxy-1.0.1-SNAPSHOT.tar.gz` — 分发包
 
 ### 2. 解压
 
 ```bash
-tar -xzf target/mq-proxy-1.0.0-SNAPSHOT.tar.gz
-cd mq-proxy-1.0.0-SNAPSHOT
+tar -xzf target/mq-proxy-1.0.1-SNAPSHOT.tar.gz
+cd mq-proxy-1.0.1-SNAPSHOT
 ```
 
 ### 3. 修改配置

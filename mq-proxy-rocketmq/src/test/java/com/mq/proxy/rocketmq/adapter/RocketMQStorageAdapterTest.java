@@ -4,11 +4,13 @@ import com.mq.proxy.core.protocol.RemotingCommand;
 import com.mq.proxy.core.protocol.ResponseCode;
 import com.mq.proxy.core.server.InvokeCallback;
 import com.mq.proxy.core.server.NettyClientConfig;
+import com.mq.proxy.core.server.NettyClientRuntime;
 import com.mq.proxy.core.server.NettyRemotingClient;
 import com.mq.proxy.core.storage.PullMessageCallback;
 import com.mq.proxy.core.storage.PutMessageCallback;
 import com.mq.proxy.core.storage.StorageConfig;
 import com.mq.proxy.core.storage.model.InternalMessage;
+import com.mq.proxy.core.storage.model.OffsetResult;
 import com.mq.proxy.core.storage.model.PullResult;
 import com.mq.proxy.core.storage.model.PutResult;
 import org.junit.Test;
@@ -187,6 +189,26 @@ public class RocketMQStorageAdapterTest {
     }
 
     @Test
+    public void testConsumerOffsetRequestsUsePullRemotingClientPool() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        CountingSyncRemotingClient producerClient = new CountingSyncRemotingClient(createQueryOffsetSuccessResponse(123L));
+        CountingSyncRemotingClient pullClient = new CountingSyncRemotingClient(createQueryOffsetSuccessResponse(123L));
+        setField(adapter, "initialized", true);
+        setField(adapter, "producerRemotingClients", new NettyRemotingClient[]{producerClient});
+        setField(adapter, "pullRemotingClients", new NettyRemotingClient[]{pullClient});
+
+        OffsetResult offsetResult = adapter.queryConsumerOffset(
+                "CID_TEST", "TestTopic", 0, "127.0.0.1:10911");
+        adapter.updateConsumerOffset(
+                "CID_TEST", "TestTopic", 0, 123L, "127.0.0.1:10911");
+
+        assertTrue(offsetResult.isSuccess());
+        assertEquals(123L, offsetResult.getOffset());
+        assertEquals(0, producerClient.invokeCount);
+        assertEquals(2, pullClient.invokeCount);
+    }
+
+    @Test
     public void testBuildUpstreamClientStatsLogSeparatesProducerAndPullPools() throws Exception {
         RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
         setField(adapter, "producerRemotingClients", new NettyRemotingClient[]{
@@ -200,6 +222,16 @@ public class RocketMQStorageAdapterTest {
 
         assertTrue(stats.contains("producer[0]{inFlight=10, availablePermits=90, limit=100}"));
         assertTrue(stats.contains("pull[0]{inFlight=20, availablePermits=80, limit=100}"));
+    }
+
+    @Test
+    public void testBuildUpstreamClientStatsLogIncludesSharedRuntimeCallbackStats() throws Exception {
+        RocketMQStorageAdapter adapter = new RocketMQStorageAdapter();
+        setField(adapter, "remotingClientRuntime", new StatsNettyClientRuntime(3, 7));
+
+        String stats = adapter.buildUpstreamClientStatsLog();
+
+        assertTrue(stats.contains("runtime={callbackActive=3, callbackQueue=7}"));
     }
 
     @Test
@@ -242,6 +274,14 @@ public class RocketMQStorageAdapterTest {
         extFields.put("msgId", msgId);
         extFields.put("queueId", String.valueOf(queueId));
         extFields.put("queueOffset", String.valueOf(queueOffset));
+        response.setExtFields(extFields);
+        return response;
+    }
+
+    private static RemotingCommand createQueryOffsetSuccessResponse(long offset) {
+        RemotingCommand response = RemotingCommand.createResponseCommand(0);
+        HashMap<String, String> extFields = new HashMap<>();
+        extFields.put("offset", String.valueOf(offset));
         response.setExtFields(extFields);
         return response;
     }
@@ -341,6 +381,20 @@ public class RocketMQStorageAdapterTest {
         }
     }
 
+    private static class CountingSyncRemotingClient extends FixedResponseRemotingClient {
+        private int invokeCount;
+
+        CountingSyncRemotingClient(RemotingCommand response) {
+            super(response);
+        }
+
+        @Override
+        public RemotingCommand invokeSync(String addr, RemotingCommand request, long timeoutMillis) throws Exception {
+            this.invokeCount++;
+            return super.invokeSync(addr, request, timeoutMillis);
+        }
+    }
+
     private static class StatsRemotingClient extends AsyncFixedResponseRemotingClient {
         private final int inFlightRequestCount;
         private final int availablePermits;
@@ -366,6 +420,27 @@ public class RocketMQStorageAdapterTest {
         @Override
         public int getAsyncSemaphoreLimit() {
             return semaphoreLimit;
+        }
+    }
+
+    private static class StatsNettyClientRuntime extends NettyClientRuntime {
+        private final int callbackActiveCount;
+        private final int callbackQueueSize;
+
+        StatsNettyClientRuntime(int callbackActiveCount, int callbackQueueSize) {
+            super(new NettyClientConfig(), "StatsNettyClientRuntime");
+            this.callbackActiveCount = callbackActiveCount;
+            this.callbackQueueSize = callbackQueueSize;
+        }
+
+        @Override
+        public int getCallbackExecutorActiveCount() {
+            return callbackActiveCount;
+        }
+
+        @Override
+        public int getCallbackExecutorQueueSize() {
+            return callbackQueueSize;
         }
     }
 }

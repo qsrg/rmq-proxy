@@ -134,6 +134,13 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         appendClientStats(builder, "producer", this.producerRemotingClients);
         builder.append(", ");
         appendClientStats(builder, "pull", this.pullRemotingClients);
+        if (this.remotingClientRuntime != null) {
+            builder.append(", runtime={callbackActive=")
+                    .append(this.remotingClientRuntime.getCallbackExecutorActiveCount())
+                    .append(", callbackQueue=")
+                    .append(this.remotingClientRuntime.getCallbackExecutorQueueSize())
+                    .append("}");
+        }
         return builder.toString();
     }
 
@@ -348,7 +355,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectProducerRemotingClient().invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectPullRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() == RemotingSysResponseCode.SUCCESS) {
             long offset = response.getExtFields() != null && response.getExtFields().get("offset") != null
@@ -372,7 +379,7 @@ public class RocketMQStorageAdapter implements StorageAdapter {
         request.makeCustomHeaderToNet();
 
         String targetAddr = resolveBrokerAddr(brokerAddr);
-        RemotingCommand response = selectProducerRemotingClient().invokeSync(targetAddr, request, 3000);
+        RemotingCommand response = selectPullRemotingClient().invokeSync(targetAddr, request, 3000);
 
         if (response.getCode() != RemotingSysResponseCode.SUCCESS) {
             throw new RuntimeException("updateConsumerOffset failed, code: " + response.getCode() + ", remark: " + response.getRemark());
